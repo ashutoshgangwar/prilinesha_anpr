@@ -6,6 +6,7 @@ const COLORS = {
   gray: 'bg-gray-100 text-gray-700',
   blue: 'bg-blue-100 text-blue-800',
   yellow: 'bg-yellow-100 text-yellow-800',
+  
 };
 
 /** Small pill label. `color` is one of: green, red, gray, blue, yellow. */
