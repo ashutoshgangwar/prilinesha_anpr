@@ -1,50 +1,69 @@
 // src/pages/Logs.jsx
-import { useState, useEffect, useCallback } from 'react';
-import { fetchLogs, deleteLog } from '../api/dataService';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { fetchLogs } from '../api/dataService';
 import { useToast } from '../context/ToastContext';
-import { getErrorMessage } from '../utils/format';
+import { useAuth } from '../context/AuthContext';
+import { getErrorMessage, normalizePagination } from '../utils/format';
 import DataTable from '../components/DataTable';
-import Filters from '../components/Filters';
-import LogImageModal from '../components/LogImageModal';
+import Filters, { EMPTY_LOG_FILTERS } from '../components/Filters';
 import { buildLogColumns } from '../components/logColumns';
 
-const PAGE_SIZE = 20;
+// Matches the API's own default. Its ceiling is 200.
+const PAGE_SIZE = 25;
 
-const EMPTY_FILTERS = {
-  vehicle_number: '',
-  event_type: '',
-  from: '',
-  to: '',
+/**
+ * Turns the filter form into query params, dropping the empty ones so a blank
+ * field is absent rather than sent as "" — the API treats an empty value as
+ * "not supplied", and this keeps the URL honest about what is being asked.
+ */
+const toParams = (filters, page) => {
+  const params = { page, limit: PAGE_SIZE };
+  for (const key of ['group_id', 'search', 'vehicle_type', 'device_name', 'from', 'to']) {
+    const value = String(filters[key] ?? '').trim();
+    if (value) params[key] = value;
+  }
+  return params;
 };
 
 export default function Logs() {
   const toast = useToast();
+  const { projects, isSuperAdmin } = useAuth();
 
   const [logs, setLogs] = useState([]);
-  const [total, setTotal] = useState(0);
+  const [pageInfo, setPageInfo] = useState(
+    normalizePagination(null, { page: 1, limit: PAGE_SIZE, total: 0 })
+  );
   const [page, setPage] = useState(1);
-  const [filters, setFilters] = useState(EMPTY_FILTERS);
+  const [filters, setFilters] = useState(EMPTY_LOG_FILTERS);
   const [loading, setLoading] = useState(true);
-  const [modalLogId, setModalLogId] = useState(null);
+  const [error, setError] = useState('');
+
+  // Only the newest request may write state. Without this, changing a filter
+  // while a slower request is in flight can let stale rows land on top.
+  const requestSeq = useRef(0);
 
   const loadLogs = useCallback(async () => {
+    const seq = ++requestSeq.current;
     setLoading(true);
+    setError('');
     try {
-      const params = { page, limit: PAGE_SIZE };
-      if (filters.vehicle_number) params.vehicle_number = filters.vehicle_number;
-      if (filters.event_type) params.event_type = filters.event_type;
-      if (filters.from) params.from = filters.from;
-      if (filters.to) params.to = filters.to;
-
-      const { items, total: t } = await fetchLogs(params);
+      const { items, total, pagination } = await fetchLogs(toParams(filters, page));
+      if (seq !== requestSeq.current) return;
       setLogs(items);
-      setTotal(t);
+      setPageInfo(normalizePagination(pagination, { page, limit: PAGE_SIZE, total }));
     } catch (err) {
-      toast.error(getErrorMessage(err, 'Failed to load logs'));
+      if (seq !== requestSeq.current) return;
+      const status = err?.response?.status;
+      const message =
+        status === 403
+          ? "You don't have access to that project."
+          : getErrorMessage(err, 'Failed to load logs');
+      setError(message);
+      toast.error(message);
       setLogs([]);
-      setTotal(0);
+      setPageInfo(normalizePagination(null, { page, limit: PAGE_SIZE, total: 0 }));
     } finally {
-      setLoading(false);
+      if (seq === requestSeq.current) setLoading(false);
     }
   }, [page, filters, toast]);
 
@@ -59,34 +78,17 @@ export default function Logs() {
 
   const handleClear = () => {
     setPage(1);
-    setFilters(EMPTY_FILTERS);
+    setFilters(EMPTY_LOG_FILTERS);
   };
 
-  const handleDelete = async (log) => {
-    const id = log.id ?? log._id;
-    if (!window.confirm(`Delete log for "${log.vehicle_number || 'unknown'}"?`)) {
-      return;
-    }
-    try {
-      await deleteLog(id);
-      toast.success('Log deleted');
-      // If we just deleted the last row on the page, step back a page.
-      if (logs.length === 1 && page > 1) {
-        setPage((p) => p - 1);
-      } else {
-        loadLogs();
-      }
-    } catch (err) {
-      toast.error(getErrorMessage(err, 'Failed to delete log'));
-    }
-  };
+  // The project column only earns its place when rows can differ: more than one
+  // project in view and no single one selected.
+  const showProject =
+    !filters.group_id && (isSuperAdmin || (projects?.length ?? 0) > 1);
 
-  const columns = buildLogColumns({
-    onView: (log) => setModalLogId(log.id ?? log._id),
-    onDelete: handleDelete,
-  });
+  const columns = useMemo(() => buildLogColumns({ showProject }), [showProject]);
 
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const { total, totalPages, hasNext, hasPrevious } = pageInfo;
   const startIndex = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
   const endIndex = Math.min(page * PAGE_SIZE, total);
 
@@ -95,33 +97,42 @@ export default function Logs() {
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Logs</h1>
         <p className="mt-1 text-sm text-gray-500">
-          License plate recognition events
+          Vehicle detections from your projects, newest first
         </p>
       </div>
 
       <Filters
         initial={filters}
+        projects={projects}
         onSearch={handleSearch}
         onClear={handleClear}
       />
+
+      {error && (
+        <div className="mb-4 rounded-md bg-red-50 px-4 py-3 text-sm text-red-700">
+          {error}
+        </div>
+      )}
 
       <DataTable
         columns={columns}
         data={logs}
         loading={loading}
-        rowKey={(row, i) => row.id ?? row._id ?? i}
-        emptyMessage="No logs found"
+        rowKey={(row, i) => row.id ?? i}
+        emptyMessage="No detections match these filters"
       />
 
-      {/* Pagination */}
+      {/* Pagination — has_next / has_previous come from the server. */}
       <div className="mt-4 flex flex-col items-center justify-between gap-3 sm:flex-row">
         <p className="text-sm text-gray-500">
-          Showing {startIndex}–{endIndex} of {total} results
+          {total === 0
+            ? 'No results'
+            : `Showing ${startIndex}–${endIndex} of ${total} detection${total === 1 ? '' : 's'}`}
         </p>
         <div className="flex items-center gap-2">
           <button
             onClick={() => setPage((p) => Math.max(1, p - 1))}
-            disabled={page <= 1 || loading}
+            disabled={!hasPrevious || loading}
             className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Previous
@@ -130,16 +141,14 @@ export default function Logs() {
             Page {page} of {totalPages}
           </span>
           <button
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            disabled={page >= totalPages || loading}
+            onClick={() => setPage((p) => p + 1)}
+            disabled={!hasNext || loading}
             className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Next
           </button>
         </div>
       </div>
-
-      <LogImageModal logId={modalLogId} onClose={() => setModalLogId(null)} />
     </div>
   );
 }

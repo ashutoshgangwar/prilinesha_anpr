@@ -22,17 +22,27 @@ export default function Badge({ color = 'gray', children }) {
   );
 }
 
-/** Maps an event_type value to a colored badge. */
-export function EventTypeBadge({ value }) {
+/**
+ * Direction a detection was facing, read out of the camera's device_name
+ * (see utils/device.js). Green in, red out — the same reading as the gate
+ * signage itself.
+ */
+export function DirectionBadge({ value }) {
   const v = String(value || '').toLowerCase();
-  const color = v === 'entry' ? 'green' : v === 'exit' ? 'red' : 'gray';
-  return <Badge color={color}>{value || 'unknown'}</Badge>;
+  if (v === 'entry') return <Badge color="green">entry</Badge>;
+  if (v === 'exit') return <Badge color="red">exit</Badge>;
+  return null;
 }
 
-/** Maps an is_registered flag to a colored badge. */
-export function RegisteredBadge({ value }) {
-  const isReg = value === true || value === 'registered' || value === 1;
-  return <Badge color={isReg ? 'blue' : 'gray'}>{isReg ? 'registered' : 'unknown'}</Badge>;
+/**
+ * Maps a log's vehicle_type ("registered" | "unregistered") to a badge.
+ * Unregistered is the notable case at a gate, so it gets the warmer colour.
+ */
+export function VehicleTypeBadge({ value }) {
+  const v = String(value || '').toLowerCase();
+  if (v === 'registered') return <Badge color="blue">registered</Badge>;
+  if (v === 'unregistered') return <Badge color="yellow">unregistered</Badge>;
+  return <Badge color="gray">—</Badge>;
 }
 
 /** Maps a gate_type value to a colored badge. */

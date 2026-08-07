@@ -1,17 +1,16 @@
 // src/pages/Dashboard.jsx
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { startOfDay, endOfDay } from 'date-fns';
-import { fetchLogs, fetchVehicles, deleteLog } from '../api/dataService';
+import { fetchLogs, fetchVehicles } from '../api/dataService';
 import { useToast } from '../context/ToastContext';
+import { useAuth } from '../context/AuthContext';
 import { getErrorMessage } from '../utils/format';
 import DataTable from '../components/DataTable';
-import LogImageModal from '../components/LogImageModal';
 import { buildLogColumns } from '../components/logColumns';
 import {
   LogsIcon,
   VehiclesIcon,
   DashboardIcon,
-  CamerasIcon,
 } from '../components/icons';
 
 function StatCard({ title, value, icon: Icon, accent, loading }) {
@@ -32,17 +31,17 @@ function StatCard({ title, value, icon: Icon, accent, loading }) {
 
 export default function Dashboard() {
   const toast = useToast();
+  const { projects, isSuperAdmin } = useAuth();
 
   const [stats, setStats] = useState({
     totalToday: 0,
-    entryToday: 0,
-    exitToday: 0,
+    registeredToday: 0,
+    unregisteredToday: 0,
     vehicles: 0,
   });
   const [statsLoading, setStatsLoading] = useState(true);
   const [recentLogs, setRecentLogs] = useState([]);
   const [recentLoading, setRecentLoading] = useState(true);
-  const [modalLogId, setModalLogId] = useState(null);
 
   const loadStats = useCallback(async () => {
     setStatsLoading(true);
@@ -50,17 +49,22 @@ export default function Dashboard() {
       const from = startOfDay(new Date()).toISOString();
       const to = endOfDay(new Date()).toISOString();
 
-      const [totalRes, entryRes, exitRes, vehiclesRes] = await Promise.all([
+      // Each tile asks for a single row and reads pagination.total — the count
+      // is the point, not the rows. These previously split the day by
+      // event_type, which /api/logs does not accept: the param was ignored and
+      // both tiles quietly showed the unfiltered total. vehicle_type is the
+      // dimension the log actually carries.
+      const [totalRes, registeredRes, unregisteredRes, vehiclesRes] = await Promise.all([
         fetchLogs({ from, to, limit: 1 }),
-        fetchLogs({ from, to, event_type: 'entry', limit: 1 }),
-        fetchLogs({ from, to, event_type: 'exit', limit: 1 }),
+        fetchLogs({ from, to, vehicle_type: 'registered', limit: 1 }),
+        fetchLogs({ from, to, vehicle_type: 'unregistered', limit: 1 }),
         fetchVehicles(),
       ]);
 
       setStats({
         totalToday: totalRes.total,
-        entryToday: entryRes.total,
-        exitToday: exitRes.total,
+        registeredToday: registeredRes.total,
+        unregisteredToday: unregisteredRes.total,
         vehicles: vehiclesRes.total,
       });
     } catch (err) {
@@ -88,25 +92,8 @@ export default function Dashboard() {
     loadRecent();
   }, [loadStats, loadRecent]);
 
-  const handleDelete = async (log) => {
-    const id = log.id ?? log._id;
-    if (!window.confirm(`Delete log for "${log.vehicle_number || 'unknown'}"?`)) {
-      return;
-    }
-    try {
-      await deleteLog(id);
-      toast.success('Log deleted');
-      loadRecent();
-      loadStats();
-    } catch (err) {
-      toast.error(getErrorMessage(err, 'Failed to delete log'));
-    }
-  };
-
-  const columns = buildLogColumns({
-    onView: (log) => setModalLogId(log.id ?? log._id),
-    onDelete: handleDelete,
-  });
+  const showProject = isSuperAdmin || (projects?.length ?? 0) > 1;
+  const columns = useMemo(() => buildLogColumns({ showProject }), [showProject]);
 
   return (
     <div>
@@ -118,24 +105,24 @@ export default function Dashboard() {
       {/* Stat cards */}
       <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
-          title="Total logs today"
+          title="Detections today"
           value={stats.totalToday}
           icon={DashboardIcon}
           accent="bg-brand-50 text-brand-600"
           loading={statsLoading}
         />
         <StatCard
-          title="Entry events today"
-          value={stats.entryToday}
+          title="Registered today"
+          value={stats.registeredToday}
           icon={LogsIcon}
-          accent="bg-green-50 text-green-600"
+          accent="bg-blue-50 text-blue-600"
           loading={statsLoading}
         />
         <StatCard
-          title="Exit events today"
-          value={stats.exitToday}
-          icon={CamerasIcon}
-          accent="bg-red-50 text-red-600"
+          title="Unregistered today"
+          value={stats.unregisteredToday}
+          icon={LogsIcon}
+          accent="bg-yellow-50 text-yellow-600"
           loading={statsLoading}
         />
         <StatCard
@@ -155,11 +142,9 @@ export default function Dashboard() {
         columns={columns}
         data={recentLogs}
         loading={recentLoading}
-        rowKey={(row, i) => row.id ?? row._id ?? i}
-        emptyMessage="No logs found"
+        rowKey={(row, i) => row.id ?? i}
+        emptyMessage="No detections yet"
       />
-
-      <LogImageModal logId={modalLogId} onClose={() => setModalLogId(null)} />
     </div>
   );
 }

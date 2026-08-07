@@ -121,94 +121,159 @@ let cameras = [
 ];
 
 // ---- Seed: logs --------------------------------------------------------------
-// A spread of events across today and the past few days, mixing event types,
-// classes, devices and registration status so filters/pagination/stats work.
+// Detections spread across today and the past few days, over two projects, both
+// vehicle types and several gates, so filters, pagination and the stat tiles all
+// have something to bite on.
+//
+// Shape mirrors GET /api/logs exactly: id, group_id, device_name,
+// vehicle_number, vehicle_type, vehicle_model, owner_name, owner_name_source,
+// detected_at, received_at.
+const MODELS = {
+  MH12AB1234: 'Maruti Swift',
+  DL8CAF5030: 'Hyundai i20',
+  KA05MJ6789: 'Honda Activa',
+  TN09BC4521: 'Tata Ace',
+  GJ01CD7788: 'Ashok Leyland Viking',
+};
+
+// [plate, group_id, device_name, daysAgo, hour, minute, ownerFromEvent]
 const seedSpec = [
-  ['MH12AB1234', 'entry', 'car', 'Main Gate Entry Cam', 0, 8, 5],
-  ['MH12AB1234', 'exit', 'car', 'Main Gate Exit Cam', 0, 18, 40],
-  ['DL8CAF5030', 'entry', 'car', 'Main Gate Entry Cam', 0, 9, 12],
-  ['KA05MJ6789', 'entry', 'bike', 'Basement Ramp Cam', 0, 9, 50],
-  ['UNKNOWN', 'unknown', 'car', 'Main Gate Entry Cam', 0, 10, 22],
-  ['TN09BC4521', 'entry', 'truck', 'Service Gate Cam', 0, 11, 5],
-  ['GJ01CD7788', 'entry', 'bus', 'Main Gate Entry Cam', 0, 12, 30],
-  ['DL8CAF5030', 'exit', 'car', 'Main Gate Exit Cam', 0, 13, 15],
-  ['RJ14XY9090', 'exit', 'car', 'Service Gate Cam', 0, 14, 0],
-  ['KA05MJ6789', 'exit', 'bike', 'Service Gate Cam', 0, 17, 35],
-  ['TN09BC4521', 'exit', 'truck', 'Service Gate Cam', 0, 19, 10],
-  ['MH14GH3322', 'entry', 'auto', 'Basement Ramp Cam', 0, 20, 25],
+  ['MH12AB1234', 'GRP-001', 'entry1', 0, 8, 5, false],
+  ['MH12AB1234', 'GRP-001', 'exit1', 0, 18, 40, false],
+  ['DL8CAF5030', 'GRP-001', 'entry1', 0, 9, 12, true],
+  ['KA05MJ6789', 'GRP-001', 'ramp1', 0, 9, 50, false],
+  ['UP16XY9999', 'GRP-001', 'entry1', 0, 10, 22, false],
+  ['TN09BC4521', 'GRP-002', 'service1', 0, 11, 5, false],
+  ['GJ01CD7788', 'GRP-002', 'entry1', 0, 12, 30, false],
+  ['DL8CAF5030', 'GRP-001', 'exit1', 0, 13, 15, true],
+  ['RJ14XY9090', 'GRP-002', 'service1', 0, 14, 0, false],
+  ['KA05MJ6789', 'GRP-001', 'exit1', 0, 17, 35, false],
+  ['TN09BC4521', 'GRP-002', 'service1', 0, 19, 10, false],
+  ['MH14GH3322', 'GRP-001', 'ramp1', 0, 20, 25, false],
 
-  ['MH12AB1234', 'entry', 'car', 'Main Gate Entry Cam', 1, 8, 30],
-  ['DL8CAF5030', 'exit', 'car', 'Main Gate Exit Cam', 1, 18, 5],
-  ['UNKNOWN', 'unknown', 'bike', 'Basement Ramp Cam', 1, 15, 45],
-  ['GJ01CD7788', 'exit', 'bus', 'Main Gate Exit Cam', 1, 19, 0],
-  ['UP32KL1212', 'entry', 'car', 'Main Gate Entry Cam', 1, 10, 10],
+  ['MH12AB1234', 'GRP-001', 'entry1', 1, 8, 30, false],
+  ['DL8CAF5030', 'GRP-001', 'exit1', 1, 18, 5, true],
+  ['UP16XY9999', 'GRP-001', 'ramp1', 1, 15, 45, false],
+  ['GJ01CD7788', 'GRP-002', 'exit1', 1, 19, 0, false],
+  ['UP32KL1212', 'GRP-002', 'entry1', 1, 10, 10, false],
 
-  ['KA05MJ6789', 'entry', 'bike', 'Basement Ramp Cam', 2, 9, 0],
-  ['TN09BC4521', 'entry', 'truck', 'Service Gate Cam', 2, 12, 20],
-  ['MH12AB1234', 'exit', 'car', 'Main Gate Exit Cam', 2, 18, 50],
-  ['RJ14XY9090', 'unknown', 'car', 'Main Gate Entry Cam', 2, 16, 30],
+  ['KA05MJ6789', 'GRP-001', 'ramp1', 2, 9, 0, false],
+  ['TN09BC4521', 'GRP-002', 'service1', 2, 12, 20, false],
+  ['MH12AB1234', 'GRP-001', 'exit1', 2, 18, 50, false],
+  ['RJ14XY9090', 'GRP-002', 'entry1', 2, 16, 30, false],
 
-  ['DL8CAF5030', 'entry', 'car', 'Main Gate Entry Cam', 3, 8, 15],
-  ['GJ01CD7788', 'entry', 'bus', 'Main Gate Entry Cam', 3, 7, 40],
-  ['MH14GH3322', 'exit', 'auto', 'Service Gate Cam', 3, 21, 5],
+  ['DL8CAF5030', 'GRP-001', 'entry1', 3, 8, 15, true],
+  ['GJ01CD7788', 'GRP-002', 'entry1', 3, 7, 40, false],
+  ['MH14GH3322', 'GRP-001', 'service1', 3, 21, 5, false],
 ];
 
-let logs = seedSpec.map(([plate, type, vclass, device, daysAgo, h, m]) => {
-  const reg = registeredSet().has(plate.toUpperCase());
-  return {
-    id: ++logIdSeq,
-    vehicle_number: plate,
-    event_type: type,
-    vehicle_class: vclass,
-    device_name: device,
-    is_registered: reg,
-    intozi_datetime: at(daysAgo, h, m),
-    event_image: vehicleSnapshot(plate),
-    plate_image: plateSnapshot(plate),
-  };
-});
+const logs = seedSpec.map(
+  ([plate, groupId, device, daysAgo, h, m, ownerFromEvent]) => {
+    const registered = registeredSet().has(plate.toUpperCase());
+    const registryOwner = vehicles.find(
+      (v) => v.vehicle_number.toUpperCase() === plate.toUpperCase()
+    )?.owner_name;
 
-// ---- Query / mutation API ----------------------------------------------------
-const byNewest = (a, b) =>
-  new Date(b.intozi_datetime) - new Date(a.intozi_datetime);
+    // Mirrors the server's resolution order: the value the camera sent wins,
+    // and the registry answers only when the event carried nothing.
+    let ownerName = null;
+    let ownerSource = null;
+    if (ownerFromEvent && registryOwner) {
+      ownerName = registryOwner;
+      ownerSource = 'event';
+    } else if (registryOwner) {
+      ownerName = registryOwner;
+      ownerSource = 'registry';
+    }
 
+    const detectedAt = at(daysAgo, h, m);
+    return {
+      id: String(++logIdSeq).padStart(24, '0'),
+      group_id: groupId,
+      device_name: device,
+      vehicle_number: plate,
+      vehicle_type: registered ? 'registered' : 'unregistered',
+      vehicle_model: MODELS[plate] || null,
+      owner_name: ownerName,
+      owner_name_source: ownerSource,
+      detected_at: detectedAt,
+      // A few seconds behind the detection, as the real feed is.
+      received_at: new Date(new Date(detectedAt).getTime() + 4000).toISOString(),
+    };
+  }
+);
+
+// ---- Query API ---------------------------------------------------------------
+const byNewest = (a, b) => new Date(b.detected_at) - new Date(a.detected_at);
+
+/**
+ * Offline stand-in for GET /api/logs. Applies the same filters the API does and
+ * returns the same { items, total, pagination } that normalizeListResponse
+ * produces, so the pages cannot tell the two apart.
+ */
 export function getLogs(params = {}) {
-  const { page = 1, limit = 20, vehicle_number, event_type, from, to } = params;
+  const {
+    page = 1,
+    limit = 25,
+    group_id: groupId,
+    search,
+    vehicle_type: vehicleType,
+    device_name: deviceName,
+    from,
+    to,
+  } = params;
 
   let items = [...logs].sort(byNewest);
 
-  if (vehicle_number) {
-    const q = String(vehicle_number).toLowerCase();
+  if (groupId) {
+    items = items.filter((l) => l.group_id === groupId);
+  }
+  if (search) {
+    // Partial and case-insensitive across plate, owner and model.
+    const q = String(search).toLowerCase();
     items = items.filter((l) =>
-      String(l.vehicle_number || '').toLowerCase().includes(q)
+      [l.vehicle_number, l.owner_name, l.vehicle_model]
+        .filter(Boolean)
+        .some((field) => String(field).toLowerCase().includes(q))
     );
   }
-  if (event_type) {
-    items = items.filter((l) => l.event_type === event_type);
+  if (vehicleType) {
+    items = items.filter((l) => l.vehicle_type === vehicleType);
+  }
+  if (deviceName) {
+    // Exact, case-insensitive.
+    const d = String(deviceName).toLowerCase();
+    items = items.filter((l) => String(l.device_name || '').toLowerCase() === d);
   }
   if (from) {
     const f = new Date(from);
-    items = items.filter((l) => new Date(l.intozi_datetime) >= f);
+    items = items.filter((l) => new Date(l.detected_at) >= f);
   }
   if (to) {
     const t = new Date(to);
-    // If a bare date was passed, include the whole day.
+    // A bare date covers the whole day, as the API's `to` does.
     if (String(to).length <= 10) t.setHours(23, 59, 59, 999);
-    items = items.filter((l) => new Date(l.intozi_datetime) <= t);
+    items = items.filter((l) => new Date(l.detected_at) <= t);
   }
 
   const total = items.length;
-  const start = (Number(page) - 1) * Number(limit);
-  const paged = items.slice(start, start + Number(limit));
-  return { items: paged, total };
-}
+  const perPage = Number(limit);
+  const currentPage = Number(page);
+  const totalPages = Math.max(1, Math.ceil(total / perPage));
+  const start = (currentPage - 1) * perPage;
 
-export function getLog(id) {
-  return logs.find((l) => String(l.id) === String(id)) || null;
-}
-
-export function deleteLog(id) {
-  logs = logs.filter((l) => String(l.id) !== String(id));
+  return {
+    items: items.slice(start, start + perPage),
+    total,
+    pagination: {
+      page: currentPage,
+      limit: perPage,
+      total,
+      total_pages: totalPages,
+      has_next: currentPage < totalPages,
+      has_previous: currentPage > 1,
+    },
+  };
 }
 
 export function getVehicles() {

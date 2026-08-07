@@ -28,12 +28,17 @@ export const formatDate = (value) => {
 
 /**
  * The backend may return paginated lists under different keys.
- * This normalizes the common shapes into { items, total }.
+ * This normalizes the common shapes into { items, total, pagination }.
+ *
+ * `count` is deliberately NOT treated as a total: on /api/logs it is the number
+ * of rows in THIS page, so using it would report "25 results" on every page of
+ * a thousand. The real figure is pagination.total.
  */
 export const normalizeListResponse = (data) => {
   if (Array.isArray(data)) {
-    return { items: data, total: data.length };
+    return { items: data, total: data.length, pagination: null };
   }
+
   const items =
     data?.data ??
     data?.logs ??
@@ -42,12 +47,41 @@ export const normalizeListResponse = (data) => {
     data?.vehicles ??
     data?.cameras ??
     [];
+  const list = Array.isArray(items) ? items : [];
+
+  const pagination = data?.pagination ?? null;
   const total =
+    pagination?.total ??
     data?.total ??
-    data?.count ??
     data?.totalCount ??
-    (Array.isArray(items) ? items.length : 0);
-  return { items: Array.isArray(items) ? items : [], total };
+    list.length;
+
+  return { items: list, total, pagination };
+};
+
+/**
+ * Page-level view of a list response, filling in what the backend didn't send.
+ * Prefers the server's own has_next / total_pages over anything recomputed
+ * locally, so the two can never disagree.
+ */
+export const normalizePagination = (pagination, { page, limit, total }) => {
+  const p = pagination || {};
+  const currentPage = p.page ?? page ?? 1;
+  const perPage = p.limit ?? limit ?? 25;
+  // Clamped to at least 1: the API reports total_pages: 0 for an empty result,
+  // which would otherwise render as "Page 1 of 0".
+  const totalPages = Math.max(
+    1,
+    p.total_pages ?? Math.ceil((total || 0) / perPage)
+  );
+  return {
+    page: currentPage,
+    limit: perPage,
+    total: p.total ?? total ?? 0,
+    totalPages,
+    hasNext: p.has_next ?? currentPage < totalPages,
+    hasPrevious: p.has_previous ?? currentPage > 1,
+  };
 };
 
 /** Extracts a human-readable message from an axios error. */

@@ -13,13 +13,18 @@ import { DEMO } from '../config';
 import { normalizeListResponse } from '../utils/format';
 import * as mock from './mockData';
 
-// Fall back when there is no HTTP response (server down / CORS / network) or the
-// endpoint responded with a not-implemented / server error status.
+// Fall back only when the backend gave no answer at all (server down / network)
+// or failed on its own side (5xx).
+//
+// 404 and 405 used to fall back too, which quietly turned "this endpoint does
+// not exist" into a screen full of convincing mock data — and, on a DELETE, into
+// a success toast for a request the server never honoured. A missing endpoint is
+// a bug to surface, not to paper over.
 const shouldFallback = (err) => {
   if (!DEMO.enabled) return false;
   const status = err?.response?.status;
   if (status == null) return true; // network error, no response
-  return status === 404 || status === 405 || status === 501 || status >= 500;
+  return status >= 500;
 };
 
 // ---- Logs --------------------------------------------------------------------
@@ -33,27 +38,10 @@ export async function fetchLogs(params = {}) {
   }
 }
 
-export async function fetchLog(id) {
-  try {
-    const resp = await api.get(`/api/logs/${id}`);
-    return resp.data?.data ?? resp.data;
-  } catch (err) {
-    if (shouldFallback(err)) return mock.getLog(id);
-    throw err;
-  }
-}
-
-export async function deleteLog(id) {
-  try {
-    await api.delete(`/api/logs/${id}`);
-  } catch (err) {
-    if (shouldFallback(err)) {
-      mock.deleteLog(id);
-      return;
-    }
-    throw err;
-  }
-}
+// There is deliberately no fetchLog(id) or deleteLog(id): the API exposes only
+// GET /api/logs. The detection log is an append-only record of what a camera
+// saw, and the backend offers no way to read one event or to delete one — so
+// the dashboard must not pretend otherwise.
 
 // ---- Vehicles ----------------------------------------------------------------
 export async function fetchVehicles() {
