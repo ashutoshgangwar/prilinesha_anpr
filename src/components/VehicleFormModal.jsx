@@ -7,7 +7,11 @@ import Modal from './Modal';
 // in the field that caused it rather than as a sentence at the top of the form.
 const PLATE_RE = /^[A-Z0-9-]+$/;
 const PHONE_RE = /^\+?[0-9][0-9\s-]{5,19}$/;
-const DEVICE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,49}$/;
+// Spaces are allowed: gates are named as the cameras send them, e.g.
+// "Netru Pro Entry". Keep this in step with DEVICE_NAME_PATTERN in the backend's
+// projectValidator — it is the single source both the vehicle and log
+// validators import.
+const DEVICE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9 _.-]{0,49}$/;
 
 const EMPTY_FORM = {
   group_id: '',
@@ -147,7 +151,7 @@ export default function VehicleFormModal({
     const devices = parseDeviceNames(form.device_names);
     const badDevice = devices.find((d) => !DEVICE_NAME_RE.test(d));
     if (badDevice)
-      next.device_names = `"${badDevice}" — letters, digits, dots, underscores or hyphens only, no spaces`;
+      next.device_names = `"${badDevice}" — letters, digits, spaces, dots, underscores or hyphens, up to 50 characters`;
     else if (devices.length > 100)
       next.device_names = 'At most 100 gates';
 

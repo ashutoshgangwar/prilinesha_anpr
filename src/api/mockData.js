@@ -173,37 +173,199 @@ let vehicles = [
 const registeredSet = () =>
   new Set(vehicles.map((v) => v.vehicle_number.toUpperCase()));
 
-// ---- Seed: cameras -----------------------------------------------------------
-let cameras = [
+// ---- Seed: projects ---------------------------------------------------------
+// Shape mirrors GET /api/projects. There is no cameras collection: gates are
+// `devices` on their project.
+let projects = [
   {
-    id: ++cameraIdSeq,
-    cam_id: 101,
-    device_name: 'Main Gate Entry Cam',
-    gate_type: 'entry',
-    location: 'North entrance',
+    id: 'p1',
+    group_id: 'GRP-001',
+    project_name: 'Ashiana Society',
+    address: '12 MG Road, Sector 14, Gurugram',
+    project_type: 'society',
+    description: null,
+    customer_name: 'Ashiana RWA',
+    contact_email: 'ops@ashiana.example',
+    contact_phone: '+91 124 4455 667',
+    devices: [
+      { device_name: 'entry1', direction: 'entry' },
+      { device_name: 'exit1', direction: 'exit' },
+      { device_name: 'ramp1', direction: 'entry' },
+    ],
+    is_active: true,
+    api_key_last4: 'a5e9',
+    api_key_rotated_at: at(40, 9, 0),
+    created_at: at(60, 10, 0),
+    updated_at: at(40, 9, 0),
   },
   {
-    id: ++cameraIdSeq,
-    cam_id: 102,
-    device_name: 'Main Gate Exit Cam',
-    gate_type: 'exit',
-    location: 'North entrance',
-  },
-  {
-    id: ++cameraIdSeq,
-    cam_id: 201,
-    device_name: 'Basement Ramp Cam',
-    gate_type: 'entry',
-    location: 'Basement P1',
-  },
-  {
-    id: ++cameraIdSeq,
-    cam_id: 202,
-    device_name: 'Service Gate Cam',
-    gate_type: 'exit',
-    location: 'East service road',
+    id: 'p2',
+    group_id: 'GRP-002',
+    project_name: 'Phoenix Mall Parking',
+    address: '4 Link Road, Andheri West, Mumbai',
+    project_type: 'parking',
+    description: null,
+    customer_name: 'Phoenix Retail',
+    contact_email: null,
+    contact_phone: null,
+    devices: [
+      { device_name: 'entry1', direction: 'entry' },
+      { device_name: 'service1', direction: 'both' },
+    ],
+    is_active: true,
+    api_key_last4: '77c2',
+    api_key_rotated_at: at(20, 11, 30),
+    created_at: at(35, 8, 0),
+    updated_at: at(20, 11, 30),
   },
 ];
+
+const withDeviceCount = (p) => ({ ...p, device_count: p.devices.length });
+
+export function getProjects(params = {}) {
+  const { page = 1, limit = 25, search, is_active: isActive } = params;
+  let items = projects.map(withDeviceCount);
+
+  if (search) {
+    const q = String(search).toLowerCase();
+    items = items.filter((p) =>
+      [p.group_id, p.project_name, p.address]
+        .filter(Boolean)
+        .some((f) => String(f).toLowerCase().includes(q))
+    );
+  }
+  if (isActive !== undefined && isActive !== '') {
+    const want = isActive === true || isActive === 'true';
+    items = items.filter((p) => p.is_active === want);
+  }
+
+  const total = items.length;
+  const perPage = Number(limit);
+  const currentPage = Number(page);
+  const totalPages = Math.max(1, Math.ceil(total / perPage));
+  const start = (currentPage - 1) * perPage;
+  return {
+    items: items.slice(start, start + perPage),
+    total,
+    pagination: {
+      page: currentPage,
+      limit: perPage,
+      total,
+      total_pages: totalPages,
+      has_next: currentPage < totalPages,
+      has_previous: currentPage > 1,
+    },
+  };
+}
+
+export function getProject(groupId) {
+  const found = projects.find((p) => p.group_id === groupId);
+  if (!found) return null;
+  return {
+    ...withDeviceCount(found),
+    stats: {
+      registered_vehicles: vehicles.filter((v) => v.group_id === groupId).length,
+      total_events: logs.filter((l) => l.group_id === groupId).length,
+      assigned_users: 1,
+    },
+  };
+}
+
+export function createProject(payload) {
+  const project = {
+    id: `p${projects.length + 1}`,
+    group_id: payload.group_id,
+    // The API sets project_name to the group_id on create — there is no
+    // separate name field to send. Mirrored here so demo mode matches.
+    project_name: payload.group_id,
+    address: payload.address,
+    project_type: payload.project_type,
+    description: payload.description ?? null,
+    customer_name: payload.customer_name ?? null,
+    contact_email: payload.contact_email ?? null,
+    contact_phone: payload.contact_phone ?? null,
+    devices: (payload.devices || []).map((d) => ({ ...d, direction: null })),
+    is_active: true,
+    api_key_last4: 'demo',
+    api_key_rotated_at: new Date().toISOString(),
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  projects = [withDeviceCount(project), ...projects];
+  return {
+    project,
+    apiKey: 'pk_demo_offline_key_not_real',
+    intoziSetup: {
+      group_id: project.group_id,
+      post_url: '/api',
+      feed_url: '/api/feed',
+      authorization_header: 'Bearer pk_demo_offline_key_not_real',
+    },
+    warning: 'Demo session — this key is not real.',
+  };
+}
+
+/** POST /api/projects/:group_id/devices — 409 on a duplicate or the 50th gate. */
+export function addProjectDevice(groupId, payload) {
+  const found = projects.find((p) => p.group_id === groupId);
+  if (!found) return null;
+
+  const name = String(payload.device_name || '').trim();
+  const clash = found.devices.some(
+    (d) => d.device_name.toLowerCase() === name.toLowerCase()
+  );
+  if (clash) throw new Error(`"${name}" is already a gate on this project.`);
+  if (found.devices.length >= 50) throw new Error('This project already has 50 gates.');
+
+  found.devices = [
+    ...found.devices,
+    { device_name: name, direction: payload.direction || null, is_active: true },
+  ];
+  found.updated_at = new Date().toISOString();
+  return withDeviceCount(found);
+}
+
+export function updateProjectDevice(groupId, deviceName, payload) {
+  const found = projects.find((p) => p.group_id === groupId);
+  if (!found) return null;
+  const device = found.devices.find((d) => d.device_name === deviceName);
+  if (!device) return null;
+  for (const field of ['direction', 'label', 'is_active']) {
+    if (payload[field] !== undefined) device[field] = payload[field];
+  }
+  found.updated_at = new Date().toISOString();
+  return withDeviceCount(found);
+}
+
+/** The project's last gate cannot be removed — the API answers 409. */
+export function removeProjectDevice(groupId, deviceName) {
+  const found = projects.find((p) => p.group_id === groupId);
+  if (!found) return null;
+  if (found.devices.length <= 1) {
+    throw new Error('A project must keep at least one gate.');
+  }
+  found.devices = found.devices.filter((d) => d.device_name !== deviceName);
+  found.updated_at = new Date().toISOString();
+  return withDeviceCount(found);
+}
+
+export function updateProject(groupId, payload) {
+  const found = projects.find((p) => p.group_id === groupId);
+  if (!found) return null;
+  for (const field of [
+    'address',
+    'project_type',
+    'description',
+    'customer_name',
+    'contact_email',
+    'contact_phone',
+    'is_active',
+  ]) {
+    if (payload[field] !== undefined) found[field] = payload[field];
+  }
+  found.updated_at = new Date().toISOString();
+  return withDeviceCount(found);
+}
 
 // ---- Seed: logs --------------------------------------------------------------
 // Detections spread across today and the past few days, over two projects, both
@@ -519,23 +681,5 @@ export function createVehicle(payload) {
   };
 }
 
-export function getCameras() {
-  const items = [...cameras];
-  return { items, total: items.length };
-}
 
-export function createCamera(payload) {
-  const created = {
-    id: ++cameraIdSeq,
-    cam_id: Number(payload.cam_id),
-    device_name: payload.device_name || '',
-    gate_type: payload.gate_type || 'entry',
-    location: payload.location || '',
-  };
-  cameras = [...cameras, created];
-  return created;
-}
 
-export function deleteCamera(id) {
-  cameras = cameras.filter((c) => String(c.id) !== String(id));
-}

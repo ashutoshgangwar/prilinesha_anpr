@@ -135,35 +135,116 @@ export async function deleteVehicle(id) {
   }
 }
 
-// ---- Cameras -----------------------------------------------------------------
-export async function fetchCameras() {
+// ---- Projects ----------------------------------------------------------------
+// Super admin only — every route below is behind requireSuperAdmin.
+
+/** Params: search, is_active, page, limit. */
+export async function fetchProjects(params = {}) {
   try {
-    const resp = await api.get('/api/cameras');
+    const resp = await api.get('/api/projects', { params });
     return normalizeListResponse(resp.data);
   } catch (err) {
-    if (shouldFallback(err)) return mock.getCameras();
+    if (shouldFallback(err)) return mock.getProjects(params);
     throw err;
   }
 }
 
-export async function createCamera(payload) {
+/** One project with its devices and live counts (stats). */
+export async function fetchProject(groupId) {
   try {
-    const resp = await api.post('/api/cameras', payload);
-    return resp.data;
+    const resp = await api.get(`/api/projects/${groupId}`);
+    return resp.data?.data ?? resp.data;
   } catch (err) {
-    if (shouldFallback(err)) return mock.createCamera(payload);
+    if (shouldFallback(err)) return mock.getProject(groupId);
     throw err;
   }
 }
 
-export async function deleteCamera(id) {
+/**
+ * POST /api/projects.
+ *
+ * The response carries the Intozi API key in full, and this is the only time it
+ * is ever readable — the server keeps a hash. Returned separately from the
+ * project so callers cannot miss it.
+ */
+export async function createProject(payload) {
   try {
-    await api.delete(`/api/cameras/${id}`);
+    const resp = await api.post('/api/projects', payload);
+    const body = resp.data ?? {};
+    const data = body.data ?? {};
+    return {
+      project: data.project ?? null,
+      apiKey: data.api_key ?? null,
+      // Present only when create_login was asked for. Carries the generated
+      // password when the server chose it — shown once, like the key.
+      login: data.login ?? null,
+      intoziSetup: data.intozi_setup ?? null,
+      warning: body.warning ?? null,
+    };
   } catch (err) {
-    if (shouldFallback(err)) {
-      mock.deleteCamera(id);
-      return;
-    }
+    if (shouldFallback(err)) return mock.createProject(payload);
     throw err;
   }
 }
+
+/** PATCH /api/projects/:group_id — group_id itself is immutable. */
+export async function updateProject(groupId, payload) {
+  try {
+    const resp = await api.patch(`/api/projects/${groupId}`, payload);
+    return resp.data?.data ?? resp.data;
+  } catch (err) {
+    if (shouldFallback(err)) return mock.updateProject(groupId, payload);
+    throw err;
+  }
+}
+
+// ---- Project devices (gates) -------------------------------------------------
+// Gates are managed one at a time rather than by rewriting the list, so adding
+// one can never silently drop another. All three return the whole updated
+// project, which callers can drop straight into state.
+
+/** POST /api/projects/:group_id/devices — { device_name, direction?, label? } */
+export async function addProjectDevice(groupId, payload) {
+  try {
+    const resp = await api.post(`/api/projects/${groupId}/devices`, payload);
+    return resp.data?.data ?? resp.data;
+  } catch (err) {
+    if (shouldFallback(err)) return mock.addProjectDevice(groupId, payload);
+    throw err;
+  }
+}
+
+/** PATCH /api/projects/:group_id/devices/:device_name — { direction?, label?, is_active? } */
+export async function updateProjectDevice(groupId, deviceName, payload) {
+  try {
+    const resp = await api.patch(
+      `/api/projects/${groupId}/devices/${encodeURIComponent(deviceName)}`,
+      payload
+    );
+    return resp.data?.data ?? resp.data;
+  } catch (err) {
+    if (shouldFallback(err)) return mock.updateProjectDevice(groupId, deviceName, payload);
+    throw err;
+  }
+}
+
+/**
+ * DELETE /api/projects/:group_id/devices/:device_name.
+ *
+ * The last gate cannot be removed (409). Detections already recorded from a
+ * removed gate are unaffected — the log stores the name, not a reference.
+ */
+export async function removeProjectDevice(groupId, deviceName) {
+  try {
+    const resp = await api.delete(
+      `/api/projects/${groupId}/devices/${encodeURIComponent(deviceName)}`
+    );
+    return resp.data?.data ?? resp.data;
+  } catch (err) {
+    if (shouldFallback(err)) return mock.removeProjectDevice(groupId, deviceName);
+    throw err;
+  }
+}
+
+// There is no Cameras section: the API has no /api/cameras. Gates live on their
+// project as `devices` (see above), which is where they are created and managed.

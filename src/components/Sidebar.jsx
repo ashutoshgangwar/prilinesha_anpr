@@ -13,11 +13,14 @@ import {
   CloseIcon,
 } from './icons';
 
+// `superAdminOnly` mirrors the API: every /api/projects route sits behind
+// requireSuperAdmin, so showing the link to anyone else only offers a 403.
+
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', icon: DashboardIcon, end: true },
   { to: '/logs', label: 'Logs', icon: LogsIcon },
   { to: '/vehicles', label: 'Vehicles', icon: VehiclesIcon },
-  { to: '/cameras', label: 'Cameras', icon: CamerasIcon },
+  { to: '/projects', label: 'Projects', icon: CamerasIcon, superAdminOnly: true },
 ];
 
 const ROLE_LABELS = {
@@ -26,7 +29,7 @@ const ROLE_LABELS = {
 };
 
 export default function Sidebar() {
-  const { logout, user, role, isDemo } = useAuth();
+  const { logout, user, role, isDemo, isSuperAdmin } = useAuth();
   const [open, setOpen] = useState(false); // mobile drawer state
   const [signingOut, setSigningOut] = useState(false);
 
@@ -58,18 +61,20 @@ export default function Sidebar() {
 
       {/* Nav links */}
       <nav className="flex-1 space-y-1 px-3 py-4">
-        {NAV_ITEMS.map(({ to, label, icon: Icon, end }) => (
-          <NavLink
-            key={to}
-            to={to}
-            end={end}
-            className={linkClass}
-            onClick={() => setOpen(false)}
-          >
-            <Icon className="h-5 w-5" />
-            <span>{label}</span>
-          </NavLink>
-        ))}
+        {NAV_ITEMS.filter((item) => !item.superAdminOnly || isSuperAdmin).map(
+          ({ to, label, icon: Icon, end }) => (
+            <NavLink
+              key={to}
+              to={to}
+              end={end}
+              className={linkClass}
+              onClick={() => setOpen(false)}
+            >
+              <Icon className="h-5 w-5" />
+              <span>{label}</span>
+            </NavLink>
+          )
+        )}
       </nav>
 
       {/* Signed-in user + logout */}

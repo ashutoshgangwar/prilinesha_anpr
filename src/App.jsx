@@ -12,7 +12,7 @@ import Signup from './pages/Signup';
 import Dashboard from './pages/Dashboard';
 import Logs from './pages/Logs';
 import Vehicles from './pages/Vehicles';
-import Cameras from './pages/Cameras';
+import Projects from './pages/Projects';
 
 /**
  * Root element of every route. It lives INSIDE the router (rendered by
@@ -44,7 +44,7 @@ const router = createBrowserRouter([
           { path: '/', element: <Dashboard /> },
           { path: '/logs', element: <Logs /> },
           { path: '/vehicles', element: <Vehicles /> },
-          { path: '/cameras', element: <Cameras /> },
+          { path: '/projects', element: <Projects /> },
         ],
       },
 
