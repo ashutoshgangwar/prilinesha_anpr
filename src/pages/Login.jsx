@@ -2,12 +2,21 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { getErrorMessage } from '../utils/format';
 import { PlateIcon } from '../components/icons';
 import { DEMO } from '../config';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_RE = /^\+?\d[\d\s-]{6,}$/; // basic phone format (7+ digits)
+
+// The backend sends a `message` for each of these; these are only the fallbacks
+// used when it doesn't. 401 is deliberately identical for a wrong email and a
+// wrong password, so this must not hint at which one was wrong.
+const LOGIN_ERRORS = {
+  400: 'Please check the details you entered and try again.',
+  401: 'Invalid email or password.',
+  403: 'This account has been deactivated. Contact your administrator.',
+  429: 'Too many attempts. Please wait a moment and try again.',
+};
 
 export default function Login() {
   const { login, isAuthenticated, loading } = useAuth();
@@ -57,7 +66,16 @@ export default function Login() {
       await login(form.email.trim(), form.password);
       navigate('/', { replace: true });
     } catch (err) {
-      setServerError(getErrorMessage(err, 'Invalid email or password'));
+      const status = err?.response?.status;
+      const fallback =
+        LOGIN_ERRORS[status] ||
+        (status == null
+          ? 'Could not reach the server. Please try again.'
+          : 'Sign in failed. Please try again.');
+      // Prefer the backend's own message; fall back to ours rather than to
+      // axios's raw "Network Error" text.
+      const serverMsg = err?.response?.data?.message || err?.response?.data?.error;
+      setServerError(serverMsg || fallback);
     } finally {
       setSubmitting(false);
     }

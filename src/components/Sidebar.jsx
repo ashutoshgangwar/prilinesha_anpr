@@ -20,9 +20,24 @@ const NAV_ITEMS = [
   { to: '/cameras', label: 'Cameras', icon: CamerasIcon },
 ];
 
+const ROLE_LABELS = {
+  super_admin: 'Super Admin',
+  admin: 'Admin',
+};
+
 export default function Sidebar() {
-  const { logout } = useAuth();
+  const { logout, user, role, isDemo } = useAuth();
   const [open, setOpen] = useState(false); // mobile drawer state
+  const [signingOut, setSigningOut] = useState(false);
+
+  const signOut = async (allDevices) => {
+    setSigningOut(true);
+    try {
+      await logout({ allDevices });
+    } finally {
+      setSigningOut(false);
+    }
+  };
 
   const linkClass = ({ isActive }) =>
     `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
@@ -57,14 +72,36 @@ export default function Sidebar() {
         ))}
       </nav>
 
-      {/* Logout */}
+      {/* Signed-in user + logout */}
       <div className="border-t border-gray-800 p-3">
+        {user && (
+          <div className="mb-2 px-3 py-2">
+            <p className="truncate text-sm font-medium text-white">
+              {user.name || user.email}
+            </p>
+            <p className="truncate text-xs text-gray-400">
+              {ROLE_LABELS[role] || role || 'User'}
+              {isDemo && ' · demo'}
+            </p>
+          </div>
+        )}
+
         <button
-          onClick={logout}
-          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-gray-300 transition-colors hover:bg-red-600 hover:text-white"
+          onClick={() => signOut(false)}
+          disabled={signingOut}
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-gray-300 transition-colors hover:bg-red-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
         >
           <LogoutIcon className="h-5 w-5" />
-          <span>Logout</span>
+          <span>{signingOut ? 'Signing out…' : 'Logout'}</span>
+        </button>
+
+        {/* Ends every session and retires outstanding access tokens. */}
+        <button
+          onClick={() => signOut(true)}
+          disabled={signingOut}
+          className="mt-1 w-full rounded-lg px-3 py-1.5 text-left text-xs text-gray-500 transition-colors hover:text-gray-300 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          Sign out of all devices
         </button>
       </div>
     </div>
