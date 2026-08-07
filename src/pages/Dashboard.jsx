@@ -54,17 +54,22 @@ export default function Dashboard() {
       // event_type, which /api/logs does not accept: the param was ignored and
       // both tiles quietly showed the unfiltered total. vehicle_type is the
       // dimension the log actually carries.
-      const [totalRes, registeredRes, unregisteredRes, vehiclesRes] = await Promise.all([
+      //
+      // Three counts, two requests: vehicle_type is an enum of exactly
+      // registered | unregistered with a default, so every row is one or the
+      // other and the third number is arithmetic, not another round trip.
+      const [totalRes, registeredRes, vehiclesRes] = await Promise.all([
         fetchLogs({ from, to, limit: 1 }),
         fetchLogs({ from, to, vehicle_type: 'registered', limit: 1 }),
-        fetchLogs({ from, to, vehicle_type: 'unregistered', limit: 1 }),
-        fetchVehicles(),
+        // limit: 1 because only the count is wanted — the default 25 would drag
+        // back a page of rows nothing renders.
+        fetchVehicles({ limit: 1 }),
       ]);
 
       setStats({
         totalToday: totalRes.total,
         registeredToday: registeredRes.total,
-        unregisteredToday: unregisteredRes.total,
+        unregisteredToday: Math.max(0, totalRes.total - registeredRes.total),
         vehicles: vehiclesRes.total,
       });
     } catch (err) {

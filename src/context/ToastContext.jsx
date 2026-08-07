@@ -1,5 +1,12 @@
 // src/context/ToastContext.jsx
-import { createContext, useContext, useState, useCallback, useRef } from 'react';
+import {
+  createContext,
+  useContext,
+  useState,
+  useCallback,
+  useMemo,
+  useRef,
+} from 'react';
 
 const ToastContext = createContext(null);
 
@@ -34,11 +41,24 @@ export const ToastProvider = ({ children }) => {
     [remove]
   );
 
-  const toast = {
-    success: (msg, d) => push(msg, 'success', d),
-    error: (msg, d) => push(msg, 'error', d),
-    info: (msg, d) => push(msg, 'info', d),
-  };
+  /**
+   * Stable identity, and it has to be.
+   *
+   * Pages build their loaders with `useCallback(..., [toast])` and run them from
+   * `useEffect(..., [loadX])`. A fresh object here on every render made that a
+   * feedback loop: a failed request shows a toast → setToasts re-renders this
+   * provider → new `toast` object → new loader → the effect fires again →
+   * another failed request. The same happened 3.5s later when a toast
+   * auto-dismissed. Memoising it is what stops the dashboard hammering the API.
+   */
+  const toast = useMemo(
+    () => ({
+      success: (msg, d) => push(msg, 'success', d),
+      error: (msg, d) => push(msg, 'error', d),
+      info: (msg, d) => push(msg, 'info', d),
+    }),
+    [push]
+  );
 
   const styles = {
     success: 'bg-green-600',

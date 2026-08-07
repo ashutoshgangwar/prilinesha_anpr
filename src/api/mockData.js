@@ -42,46 +42,131 @@ const plateSnapshot = (plate) =>
   );
 
 // ---- Seed: vehicles ----------------------------------------------------------
+// Shape mirrors GET /api/vehicles: id, group_id, vehicle_number, device_names,
+// name, phone_number, valid_till, created_at, updated_at. `status` and
+// `days_remaining` are derived on read, exactly as the server derives them.
+
+/** A bare date covers the whole of that day, as the API's valid_till does. */
+const toInclusiveEndOfDay = (value) => {
+  const raw = String(value || '');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return new Date(`${raw}T23:59:59.999Z`).toISOString();
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
+};
+
+/**
+ * Status is derived, never stored — mirroring the server's statusOf(). Two
+ * things decide it and both must hold: the pass must still be in date (owned by
+ * time) and the vehicle must not be switched off (owned by a dashboard user).
+ */
+const vehicleStatus = (v) =>
+  v.is_active === false || new Date(v.valid_till).getTime() < Date.now()
+    ? 'unregistered'
+    : 'registered';
+
+/** Why it is unregistered — null while registered. */
+const inactiveReason = (v) =>
+  v.is_active === false
+    ? 'deactivated'
+    : new Date(v.valid_till).getTime() < Date.now()
+      ? 'expired'
+      : null;
+
+/** Negative once expired, so the UI can say "expired 3 days ago". */
+const daysRemaining = (v) =>
+  Math.ceil((new Date(v.valid_till).getTime() - Date.now()) / 86400000);
+
+/** Adds the three derived fields to a stored row. */
+const decorate = (v) => ({
+  ...v,
+  is_active: v.is_active !== false,
+  status: vehicleStatus(v),
+  inactive_reason: inactiveReason(v),
+  days_remaining: daysRemaining(v),
+});
+
+const DEMO_ACTOR = { id: 'demo-user', name: 'Demo User', email: 'demo@anpr.com' };
+
+/** Days from now, as an inclusive end-of-day ISO string. */
+const validFor = (days) =>
+  toInclusiveEndOfDay(
+    new Date(Date.now() + days * 86400000).toISOString().slice(0, 10)
+  );
+
 let vehicles = [
   {
-    id: ++vehicleIdSeq,
+    id: String(++vehicleIdSeq).padStart(24, '0'),
+    group_id: 'GRP-001',
     vehicle_number: 'MH12AB1234',
-    owner_name: 'Rohit Sharma',
-    vehicle_class: 'car',
-    notes: 'Resident — Tower A',
-    createdAt: at(40, 9, 15),
+    vehicle_model: 'Maruti Swift',
+    device_names: [],
+    name: 'Rohit Sharma',
+    phone_number: '+91 98200 11223',
+    valid_till: validFor(120),
+    registered_by: DEMO_ACTOR,
+    updated_by: DEMO_ACTOR,
+    created_at: at(40, 9, 15),
+    updated_at: at(40, 9, 15),
   },
   {
-    id: ++vehicleIdSeq,
+    id: String(++vehicleIdSeq).padStart(24, '0'),
+    group_id: 'GRP-001',
     vehicle_number: 'DL8CAF5030',
-    owner_name: 'Anita Verma',
-    vehicle_class: 'car',
-    notes: '',
-    createdAt: at(30, 11, 0),
+    vehicle_model: 'Hyundai i20',
+    device_names: ['entry1', 'exit1'],
+    name: 'Anita Verma',
+    phone_number: '+91 98111 44556',
+    valid_till: validFor(9),
+    registered_by: DEMO_ACTOR,
+    updated_by: DEMO_ACTOR,
+    created_at: at(30, 11, 0),
+    updated_at: at(30, 11, 0),
   },
   {
-    id: ++vehicleIdSeq,
+    id: String(++vehicleIdSeq).padStart(24, '0'),
+    group_id: 'GRP-001',
     vehicle_number: 'KA05MJ6789',
-    owner_name: 'Suresh Rao',
-    vehicle_class: 'bike',
-    notes: 'Visitor pass',
-    createdAt: at(22, 14, 30),
+    vehicle_model: 'Honda Activa',
+    device_names: ['ramp1'],
+    name: 'Suresh Rao',
+    phone_number: '+91 99001 23456',
+    valid_till: validFor(240),
+    registered_by: DEMO_ACTOR,
+    updated_by: DEMO_ACTOR,
+    created_at: at(22, 14, 30),
+    updated_at: at(22, 14, 30),
   },
   {
-    id: ++vehicleIdSeq,
+    id: String(++vehicleIdSeq).padStart(24, '0'),
+    group_id: 'GRP-002',
     vehicle_number: 'TN09BC4521',
-    owner_name: 'Logistics Co.',
-    vehicle_class: 'truck',
-    notes: 'Delivery vendor',
-    createdAt: at(15, 8, 45),
+    vehicle_model: 'Tata Ace',
+    device_names: [],
+    name: 'Logistics Co.',
+    phone_number: '+91 44 2233 4455',
+    valid_till: validFor(45),
+    // Suspended by hand: in date, but switched off — so it reads as
+    // unregistered for a different reason than the lapsed row below.
+    is_active: false,
+    registered_by: DEMO_ACTOR,
+    updated_by: DEMO_ACTOR,
+    created_at: at(15, 8, 45),
+    updated_at: at(2, 10, 0),
   },
   {
-    id: ++vehicleIdSeq,
+    // Lapsed, so the expired styling and the status filter have a subject.
+    id: String(++vehicleIdSeq).padStart(24, '0'),
+    group_id: 'GRP-002',
     vehicle_number: 'GJ01CD7788',
-    owner_name: 'City Transit',
-    vehicle_class: 'bus',
-    notes: 'Staff shuttle',
-    createdAt: at(10, 7, 5),
+    vehicle_model: 'Ashok Leyland Viking',
+    device_names: [],
+    name: 'City Transit',
+    phone_number: '+91 79 4455 6677',
+    valid_till: validFor(-12),
+    registered_by: DEMO_ACTOR,
+    updated_by: DEMO_ACTOR,
+    created_at: at(10, 7, 5),
+    updated_at: at(10, 7, 5),
   },
 ];
 
@@ -170,9 +255,10 @@ const seedSpec = [
 const logs = seedSpec.map(
   ([plate, groupId, device, daysAgo, h, m, ownerFromEvent]) => {
     const registered = registeredSet().has(plate.toUpperCase());
+    // The registry holds the holder's name under `name`, matching the API.
     const registryOwner = vehicles.find(
       (v) => v.vehicle_number.toUpperCase() === plate.toUpperCase()
-    )?.owner_name;
+    )?.name;
 
     // Mirrors the server's resolution order: the value the camera sent wins,
     // and the registry answers only when the event carried nothing.
@@ -276,28 +362,161 @@ export function getLogs(params = {}) {
   };
 }
 
-export function getVehicles() {
-  const items = [...vehicles].sort(
-    (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
-  );
-  return { items, total: items.length };
+/**
+ * Offline stand-in for GET /api/vehicles. Same { items, total, pagination } the
+ * real call produces after normalizeListResponse.
+ */
+export function getVehicles(params = {}) {
+  const {
+    page = 1,
+    limit = 25,
+    group_id: groupId,
+    search,
+    status,
+    is_active: isActive,
+    registered_by: registeredBy,
+  } = params;
+
+  let items = [...vehicles]
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+    .map(decorate);
+
+  if (groupId) items = items.filter((v) => v.group_id === groupId);
+  if (search) {
+    const q = String(search).toLowerCase();
+    items = items.filter((v) =>
+      [v.vehicle_number, v.name, v.phone_number, v.vehicle_model]
+        .filter(Boolean)
+        .some((f) => String(f).toLowerCase().includes(q))
+    );
+  }
+  // status and is_active intersect rather than overwrite each other, so
+  // is_active=true&status=unregistered means "merely lapsed, not suspended"
+  // and is_active=false&status=registered correctly matches nothing.
+  if (status) items = items.filter((v) => v.status === status);
+  if (isActive !== undefined && isActive !== '') {
+    const want = isActive === true || isActive === 'true';
+    items = items.filter((v) => v.is_active === want);
+  }
+  if (registeredBy) {
+    items = items.filter((v) => v.registered_by?.id === registeredBy);
+  }
+
+  const total = items.length;
+  const perPage = Number(limit);
+  const currentPage = Number(page);
+  const totalPages = Math.max(1, Math.ceil(total / perPage));
+  const start = (currentPage - 1) * perPage;
+
+  return {
+    items: items.slice(start, start + perPage),
+    total,
+    pagination: {
+      page: currentPage,
+      limit: perPage,
+      total,
+      total_pages: totalPages,
+      has_next: currentPage < totalPages,
+      has_previous: currentPage > 1,
+    },
+  };
 }
 
-export function createVehicle(payload) {
-  const created = {
-    id: ++vehicleIdSeq,
-    vehicle_number: payload.vehicle_number,
-    owner_name: payload.owner_name || '',
-    vehicle_class: payload.vehicle_class || 'car',
-    notes: payload.notes || '',
-    createdAt: new Date().toISOString(),
-  };
-  vehicles = [created, ...vehicles];
-  return created;
+const findVehicle = (id) => vehicles.find((v) => String(v.id) === String(id));
+
+export function getVehicle(id) {
+  const found = findVehicle(id);
+  return found ? decorate(found) : null;
+}
+
+/** PATCH /api/vehicles/:id — only the fields present are touched. */
+export function updateVehicle(id, payload) {
+  const found = findVehicle(id);
+  if (!found) return null;
+
+  for (const field of ['name', 'phone_number', 'is_active']) {
+    if (payload[field] !== undefined) found[field] = payload[field];
+  }
+  // "" is a real edit meaning "no model", normalised to null like the API does.
+  if (payload.vehicle_model !== undefined) {
+    found.vehicle_model = payload.vehicle_model || null;
+  }
+  if (payload.valid_till !== undefined) {
+    found.valid_till = toInclusiveEndOfDay(payload.valid_till);
+  }
+  // An explicit [] widens back to every gate, so absence is the only "leave
+  // alone" — checking truthiness here would silently ignore that edit.
+  if (payload.device_names !== undefined) {
+    found.device_names = payload.device_names || [];
+  }
+  found.updated_at = new Date().toISOString();
+  found.updated_by = DEMO_ACTOR;
+  return decorate(found);
+}
+
+/** PATCH /api/vehicles/:id/status — valid_till is deliberately untouched. */
+export function setVehicleStatus(id, isActive) {
+  const found = findVehicle(id);
+  if (!found) return null;
+  found.is_active = isActive;
+  found.updated_at = new Date().toISOString();
+  found.updated_by = DEMO_ACTOR;
+  return decorate(found);
 }
 
 export function deleteVehicle(id) {
+  const found = findVehicle(id);
   vehicles = vehicles.filter((v) => String(v.id) !== String(id));
+  return found ? decorate(found) : null;
+}
+
+/**
+ * Offline stand-in for POST /api/vehicles. Mirrors the server's upsert: an
+ * existing plate in the same project is renewed (created: false) rather than
+ * duplicated.
+ */
+export function createVehicle(payload) {
+  const groupId = payload.group_id || vehicles[0]?.group_id || 'GRP-001';
+  const plate = String(payload.vehicle_number || '').toUpperCase();
+  const validTill = toInclusiveEndOfDay(payload.valid_till);
+
+  const existing = vehicles.find(
+    (v) => v.vehicle_number === plate && v.group_id === groupId
+  );
+
+  if (existing) {
+    Object.assign(existing, {
+      vehicle_model: payload.vehicle_model || null,
+      name: payload.name,
+      phone_number: payload.phone_number,
+      valid_till: validTill,
+      device_names: payload.device_names || [],
+      updated_at: new Date().toISOString(),
+    });
+    return { created: false, vehicle: decorate(existing) };
+  }
+
+  const now = new Date().toISOString();
+  const vehicle = {
+    id: String(++vehicleIdSeq).padStart(24, '0'),
+    group_id: groupId,
+    vehicle_number: plate,
+    vehicle_model: payload.vehicle_model || null,
+    device_names: payload.device_names || [],
+    name: payload.name,
+    phone_number: payload.phone_number,
+    valid_till: validTill,
+    is_active: true,
+    registered_by: DEMO_ACTOR,
+    updated_by: DEMO_ACTOR,
+    created_at: now,
+    updated_at: now,
+  };
+  vehicles = [vehicle, ...vehicles];
+  return {
+    created: true,
+    vehicle: decorate(vehicle),
+  };
 }
 
 export function getCameras() {

@@ -64,11 +64,6 @@ function GateCell({ row }) {
 export function buildLogColumns({ showProject = false } = {}) {
   const columns = [
     {
-      key: 'owner_name',
-      header: 'Owner',
-      render: (row) => <OwnerCell row={row} />,
-    },
-    {
       key: 'vehicle_number',
       header: 'Vehicle number',
       render: (row) => (
@@ -76,6 +71,11 @@ export function buildLogColumns({ showProject = false } = {}) {
           {row.vehicle_number || '—'}
         </span>
       ),
+    },
+    {
+      key: 'owner_name',
+      header: 'Owner',
+      render: (row) => <OwnerCell row={row} />,
     },
     {
       key: 'vehicle_model',
