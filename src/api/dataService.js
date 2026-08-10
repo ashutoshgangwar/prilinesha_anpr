@@ -229,6 +229,46 @@ export async function updateProjectDevice(groupId, deviceName, payload) {
 }
 
 /**
+ * GET /api/projects/:group_id/devices — the gates of one project and nothing
+ * else. This is what the vehicle form's gate picker reads.
+ *
+ * Not behind requireSuperAdmin, unlike fetchProject: any dashboard token may
+ * call it for a project in its own scope, so a customer admin registering a
+ * vehicle can see their own gates.
+ *
+ * Omitting groupId uses GET /api/projects/devices, which infers the project
+ * when the account holds exactly one — declared before /:group_id server-side,
+ * so "devices" is not read as a group_id.
+ *
+ * Switched-off gates are left out: a decommissioned camera must not be offered
+ * as a choice. `include_inactive` brings them back, and total_count always
+ * reports everything the project holds.
+ *
+ * Returns the response's data block as it stands — devices, the flat
+ * device_names array a picker binds to and posts straight back, count and
+ * total_count — with device_names derived if an older backend omits it.
+ */
+export async function fetchProjectDevices(groupId, { includeInactive = false } = {}) {
+  const params = includeInactive ? { include_inactive: true } : {};
+  try {
+    const resp = groupId
+      ? await api.get(`/api/projects/${encodeURIComponent(groupId)}/devices`, { params })
+      : await api.get('/api/projects/devices', { params });
+
+    const data = resp.data?.data ?? {};
+    const devices = data.devices ?? [];
+    return {
+      ...data,
+      devices,
+      device_names: data.device_names ?? devices.map((d) => d.device_name),
+    };
+  } catch (err) {
+    if (shouldFallback(err)) return mock.getProjectDevices(groupId, { includeInactive });
+    throw err;
+  }
+}
+
+/**
  * DELETE /api/projects/:group_id/devices/:device_name.
  *
  * The last gate cannot be removed (409). Detections already recorded from a

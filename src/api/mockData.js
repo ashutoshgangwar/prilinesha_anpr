@@ -305,6 +305,40 @@ export function createProject(payload) {
   };
 }
 
+/**
+ * GET /api/projects/:group_id/devices, and the same list without the project in
+ * the path when groupId is omitted — which only answers for an account holding
+ * exactly one project, as the real route does.
+ */
+export function getProjectDevices(groupId, { includeInactive = false } = {}) {
+  const found = groupId
+    ? projects.find((p) => p.group_id === groupId)
+    : projects.length === 1
+      ? projects[0]
+      : null;
+
+  if (!found) {
+    throw new Error(
+      groupId
+        ? `No project found with group_id "${groupId}".`
+        : 'Name a project with group_id — this account holds more than one.'
+    );
+  }
+
+  const all = found.devices ?? [];
+  const visible = includeInactive ? all : all.filter((d) => d.is_active !== false);
+
+  return {
+    group_id: found.group_id,
+    project_name: found.project_name,
+    project_is_active: found.is_active !== false,
+    devices: visible.map((d) => ({ ...d, is_active: d.is_active !== false })),
+    device_names: visible.map((d) => d.device_name),
+    count: visible.length,
+    total_count: all.length,
+  };
+}
+
 /** POST /api/projects/:group_id/devices — 409 on a duplicate or the 50th gate. */
 export function addProjectDevice(groupId, payload) {
   const found = projects.find((p) => p.group_id === groupId);

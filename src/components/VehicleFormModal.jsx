@@ -1,6 +1,8 @@
 // src/components/VehicleFormModal.jsx
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import Modal from './Modal';
+import { fetchProjectDevices } from '../api/dataService';
+import { getErrorMessage } from '../utils/format';
 
 // Mirrors validators/vehicleValidator.js. Checking here too is not about
 // trusting the client — the server still decides — it is so a typo is caught
@@ -20,7 +22,36 @@ const EMPTY_FORM = {
   phone_number: '',
   vehicle_model: '',
   valid_till: '',
-  device_names: '',
+  device_names: [],
+};
+
+// The API rejects a gate that is not on the project, so all_devices comes back
+// under its own name. It is the same question as device_names on this form, and
+// the message belongs on the field the operator was looking at.
+const FIELD_ALIASES = { all_devices: 'device_names' };
+
+/**
+ * How the registration's gates are chosen. Three options because the API means
+ * three different things, and the difference only shows up months later:
+ *
+ *   every       — send nothing. `[]` is the wildcard, and it follows the
+ *                 project: a gate added next month is covered automatically.
+ *   all_named   — send all_devices: true. The server expands it to every active
+ *                 gate and writes them onto the record by name, so the
+ *                 registration states what it was granted. A gate added later is
+ *                 NOT covered until the vehicle is saved again.
+ *   specific    — send the ticked names.
+ */
+const GATE_EVERY = 'every';
+const GATE_ALL_NAMED = 'all_named';
+const GATE_SPECIFIC = 'specific';
+
+const GATE_HINTS = {
+  [GATE_EVERY]:
+    'Follows the project — a gate added to it later is covered automatically.',
+  [GATE_ALL_NAMED]:
+    'Today’s gates are written onto the record by name. A gate added later is not covered until you save this vehicle again.',
+  [GATE_SPECIFIC]: 'Valid only at the gates ticked below.',
 };
 
 /**
@@ -51,6 +82,14 @@ const parseDeviceNames = (value) =>
     .map((s) => s.trim())
     .filter(Boolean);
 
+/** Same gates, whatever the order or casing — so an unchanged pick is not a PATCH. */
+const sameGates = (a, b) => {
+  if (a.length !== b.length) return false;
+  const sorted = (list) => [...list].map((n) => n.toLowerCase()).sort();
+  const [left, right] = [sorted(a), sorted(b)];
+  return left.every((name, i) => name === right[i]);
+};
+
 /** Prefills the form from an existing row when editing. */
 const formFromVehicle = (vehicle) => ({
   group_id: vehicle.group_id || '',
@@ -59,8 +98,99 @@ const formFromVehicle = (vehicle) => ({
   phone_number: vehicle.phone_number || '',
   vehicle_model: vehicle.vehicle_model || '',
   valid_till: vehicle.valid_till ? String(vehicle.valid_till).slice(0, 10) : '',
-  device_names: (vehicle.device_names || []).join(', '),
+  device_names: vehicle.device_names || [],
 });
+
+// A stored list means the registration was restricted; an empty one is the
+// wildcard. "All gates by name" is never inferred from a list that happens to
+// match the project today — it is only what someone explicitly chose.
+const gateModeFromVehicle = (vehicle) =>
+  (vehicle?.device_names || []).length ? GATE_SPECIFIC : GATE_EVERY;
+
+/**
+ * The gate list itself: the project's active gates, ticked one by one.
+ *
+ * Bound to `device_names` from GET /api/projects/:group_id/devices, which is the
+ * flat array the API takes straight back — so what is ticked here is posted
+ * verbatim, with no client-side mapping to get wrong.
+ */
+function GatePicker({
+  needsProject,
+  loading,
+  error,
+  options,
+  selected,
+  onToggle,
+  manualValue,
+  onManualChange,
+  hiddenCount,
+}) {
+  const note = (text, tone = 'text-gray-500') => (
+    <p
+      className={`rounded-md border border-dashed border-gray-300 px-3 py-2 text-xs ${tone}`}
+    >
+      {text}
+    </p>
+  );
+
+  if (needsProject) return note('Choose a project first — gates belong to one.');
+  if (loading) return note('Loading this project’s gates…');
+
+  // The gate list is a convenience, not the only way in: if it cannot be read,
+  // the names can still be typed, which is what this form did before.
+  if (error) {
+    return (
+      <div>
+        <p className="mb-1 text-xs text-amber-600">
+          {error} — type the gate names instead, separated by commas.
+        </p>
+        <input
+          type="text"
+          value={manualValue}
+          onChange={(e) => onManualChange(e.target.value)}
+          placeholder="entry1, exit1"
+          className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+        />
+      </div>
+    );
+  }
+
+  if (!options.length)
+    return note('This project has no active gates to choose from.', 'text-amber-600');
+
+  return (
+    <div className="rounded-md border border-gray-200">
+      <ul className="max-h-44 overflow-y-auto p-1">
+        {options.map((option) => (
+          <li key={option.name}>
+            <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-gray-50">
+              <input
+                type="checkbox"
+                checked={selected.includes(option.name)}
+                onChange={() => onToggle(option.name)}
+                className="h-4 w-4 rounded border-gray-300 text-brand-500 focus:ring-brand-500"
+              />
+              <span className="font-mono text-xs text-gray-900">{option.name}</span>
+              {option.direction && (
+                <span className="text-xs text-gray-400">{option.direction}</span>
+              )}
+              {option.missing && (
+                <span className="text-xs text-amber-600">
+                  switched off or removed
+                </span>
+              )}
+            </label>
+          </li>
+        ))}
+      </ul>
+      {hiddenCount > 0 && (
+        <p className="border-t border-gray-100 px-3 py-1.5 text-xs text-gray-400">
+          {hiddenCount} switched-off gate{hiddenCount === 1 ? '' : 's'} not offered.
+        </p>
+      )}
+    </div>
+  );
+}
 
 /**
  * Add / edit dialog for POST /api/vehicles and PATCH /api/vehicles/:id.
@@ -94,6 +224,18 @@ export default function VehicleFormModal({
   const [errors, setErrors] = useState({});
   const [formError, setFormError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [gateMode, setGateMode] = useState(() => gateModeFromVehicle(vehicle));
+  // Only used when the gate list cannot be read and the names are typed instead.
+  // Held as raw text so a half-typed "entry1, " keeps its comma while you type.
+  const [manualGates, setManualGates] = useState(() =>
+    (vehicle?.device_names || []).join(', ')
+  );
+
+  // The gate list for the project in question — GET /api/projects/:group_id/devices.
+  const [gates, setGates] = useState(null);
+  const [gatesLoading, setGatesLoading] = useState(false);
+  const [gatesError, setGatesError] = useState('');
+  const gatesSeq = useRef(0);
 
   // Reset whenever the dialog is opened, so a previous attempt's values and
   // errors never bleed into a new one.
@@ -108,15 +250,100 @@ export default function VehicleFormModal({
               group_id: projects.length === 1 ? projects[0].group_id : '',
             }
       );
+      setGateMode(gateModeFromVehicle(vehicle));
+      setManualGates((vehicle?.device_names || []).join(', '));
       setErrors({});
       setFormError('');
       setSubmitting(false);
     }
   }, [open, vehicle, projects]);
 
+  // Which project's gates to show. On an edit it is the row's own project, which
+  // cannot be changed; on a new registration it is whatever is selected.
+  const gatesGroupId = isEdit ? vehicle.group_id || '' : form.group_id;
+
+  // Several projects and none picked yet — there is nothing to ask the API for.
+  const gatesNeedProject = !gatesGroupId && projects.length > 1;
+
+  useEffect(() => {
+    if (!open || gatesNeedProject) {
+      setGates(null);
+      setGatesError('');
+      setGatesLoading(false);
+      return;
+    }
+
+    const seq = ++gatesSeq.current;
+    setGatesLoading(true);
+    setGatesError('');
+
+    // No group_id at all is a real call: the endpoint infers the project when
+    // the account holds exactly one.
+    fetchProjectDevices(gatesGroupId || undefined)
+      .then((data) => {
+        if (seq !== gatesSeq.current) return;
+        setGates(data);
+      })
+      .catch((err) => {
+        if (seq !== gatesSeq.current) return;
+        setGates(null);
+        setGatesError(getErrorMessage(err, 'Could not load this project’s gates'));
+      })
+      .finally(() => {
+        if (seq === gatesSeq.current) setGatesLoading(false);
+      });
+  }, [open, gatesGroupId, gatesNeedProject]);
+
+  /**
+   * What can be ticked: the project's active gates, plus any gate this vehicle
+   * is already registered at that the project no longer offers.
+   *
+   * The second half matters — a gate switched off after the vehicle was
+   * registered is not in the list, and without it saving an unrelated edit would
+   * quietly drop that gate from the record.
+   */
+  const gateOptions = useMemo(() => {
+    const options = (gates?.devices ?? []).map((device) => ({
+      name: device.device_name,
+      direction: device.direction,
+      missing: false,
+    }));
+
+    const known = new Set(options.map((o) => o.name.toLowerCase()));
+    for (const name of vehicle?.device_names ?? []) {
+      if (!known.has(name.toLowerCase())) {
+        options.push({ name, direction: null, missing: true });
+        known.add(name.toLowerCase());
+      }
+    }
+
+    return options;
+  }, [gates, vehicle]);
+
   const update = (key, value) => {
     setForm((prev) => ({ ...prev, [key]: value }));
     setErrors((prev) => ({ ...prev, [key]: undefined }));
+    setFormError('');
+  };
+
+  // A gate name only means anything within its project, so switching project
+  // starts the choice again rather than carrying names across to one that has
+  // never heard of them.
+  const changeProject = (groupId) => {
+    setForm((prev) => ({ ...prev, group_id: groupId, device_names: [] }));
+    setGateMode(GATE_EVERY);
+    setErrors((prev) => ({ ...prev, group_id: undefined, device_names: undefined }));
+    setFormError('');
+  };
+
+  const toggleGate = (name) => {
+    setForm((prev) => ({
+      ...prev,
+      device_names: prev.device_names.includes(name)
+        ? prev.device_names.filter((n) => n !== name)
+        : [...prev.device_names, name],
+    }));
+    setErrors((prev) => ({ ...prev, device_names: undefined }));
     setFormError('');
   };
 
@@ -148,12 +375,15 @@ export default function VehicleFormModal({
 
     if (!form.valid_till) next.valid_till = 'Expiry date is required';
 
-    const devices = parseDeviceNames(form.device_names);
-    const badDevice = devices.find((d) => !DEVICE_NAME_RE.test(d));
-    if (badDevice)
-      next.device_names = `"${badDevice}" — letters, digits, spaces, dots, underscores or hyphens, up to 50 characters`;
-    else if (devices.length > 100)
-      next.device_names = 'At most 100 gates';
+    if (gateMode === GATE_SPECIFIC) {
+      const devices = form.device_names;
+      const badDevice = devices.find((d) => !DEVICE_NAME_RE.test(d));
+      if (!devices.length)
+        next.device_names = 'Tick at least one gate, or choose every gate above';
+      else if (badDevice)
+        next.device_names = `"${badDevice}" — letters, digits, spaces, dots, underscores or hyphens, up to 50 characters`;
+      else if (devices.length > 100) next.device_names = 'At most 100 gates';
+    }
 
     setErrors(next);
     return Object.keys(next).length === 0;
@@ -164,7 +394,9 @@ export default function VehicleFormModal({
     setFormError('');
     if (!validate()) return;
 
-    const devices = parseDeviceNames(form.device_names);
+    // Only a specific pick carries names; the other two modes are said with
+    // all_devices or with nothing at all.
+    const devices = gateMode === GATE_SPECIFIC ? form.device_names : [];
     let payload;
 
     if (isEdit) {
@@ -183,13 +415,16 @@ export default function VehicleFormModal({
       if (form.vehicle_model.trim() !== (vehicle.vehicle_model || ''))
         payload.vehicle_model = form.vehicle_model.trim();
 
-      const before = vehicle.device_names || [];
-      const changedGates =
-        devices.length !== before.length ||
-        devices.some((d, i) => d !== before[i]);
-      // Sent even when empty: [] is a real edit that widens the registration
-      // back to every gate.
-      if (changedGates) payload.device_names = devices;
+      if (gateMode === GATE_ALL_NAMED) {
+        // Counts as an edit on its own. The server expands it to the gates that
+        // exist right now, and nothing on the record says whether that list has
+        // moved since — so asking for it is always meant.
+        payload.all_devices = true;
+      } else if (!sameGates(devices, vehicle.device_names || [])) {
+        // Sent even when empty: [] is a real edit that widens the registration
+        // back to every gate.
+        payload.device_names = devices;
+      }
 
       if (Object.keys(payload).length === 0) {
         setFormError('Nothing has changed yet.');
@@ -206,9 +441,10 @@ export default function VehicleFormModal({
       // Omitted entirely when the server is to infer it — sending "" would be a
       // validation error rather than the "use my only project" it looks like.
       if (form.group_id) payload.group_id = form.group_id;
+      if (gateMode === GATE_ALL_NAMED) payload.all_devices = true;
       // An empty list means "valid at every gate", which is also what omitting
       // it means — so leave it out rather than sending [].
-      if (devices.length) payload.device_names = devices;
+      else if (devices.length) payload.device_names = devices;
     }
 
     setSubmitting(true);
@@ -221,8 +457,9 @@ export default function VehicleFormModal({
       const fieldErrors = {};
       let leftover = '';
       for (const item of data?.errors || []) {
-        // device_names[0] -> device_names
-        const field = String(item.field || '').replace(/\[\d+\].*$/, '');
+        // device_names[0] -> device_names, and all_devices onto the same field
+        const raw = String(item.field || '').replace(/\[\d+\].*$/, '');
+        const field = FIELD_ALIASES[raw] ?? raw;
         if (field && field in EMPTY_FORM) fieldErrors[field] = item.message;
         else leftover = item.message;
       }
@@ -297,7 +534,7 @@ export default function VehicleFormModal({
               <Field label="Project *" error={errors.group_id}>
                 <select
                   value={form.group_id}
-                  onChange={(e) => update('group_id', e.target.value)}
+                  onChange={(e) => changeProject(e.target.value)}
                   className={inputClass('group_id')}
                 >
                   <option value="">Select a project…</option>
@@ -380,16 +617,47 @@ export default function VehicleFormModal({
         <Field
           label="Gates"
           error={errors.device_names}
-          hint="Comma-separated, e.g. entry1, exit1. Leave blank for every gate in the project."
+          hint={GATE_HINTS[gateMode]}
         >
-          <input
-            type="text"
-            value={form.device_names}
-            onChange={(e) => update('device_names', e.target.value)}
+          <select
+            value={gateMode}
+            onChange={(e) => {
+              setGateMode(e.target.value);
+              setErrors((prev) => ({ ...prev, device_names: undefined }));
+              setFormError('');
+            }}
             className={inputClass('device_names')}
-            placeholder="entry1, exit1"
-          />
+          >
+            <option value={GATE_EVERY}>Every gate in the project</option>
+            <option value={GATE_ALL_NAMED}>All gates</option>
+            <option value={GATE_SPECIFIC}>Only the gates I choose…</option>
+          </select>
         </Field>
+
+        {gateMode === GATE_SPECIFIC && (
+          <GatePicker
+            needsProject={gatesNeedProject}
+            loading={gatesLoading}
+            error={gatesError}
+            options={gateOptions}
+            selected={form.device_names}
+            onToggle={toggleGate}
+            manualValue={manualGates}
+            onManualChange={(value) => {
+              setManualGates(value);
+              update('device_names', parseDeviceNames(value));
+            }}
+            hiddenCount={
+              gates ? Math.max(0, (gates.total_count ?? 0) - (gates.count ?? 0)) : 0
+            }
+          />
+        )}
+
+        {gateMode === GATE_ALL_NAMED && gates?.count === 0 && (
+          <p className="text-xs text-amber-600">
+            This project has no active gates, so “all gates” would select nothing.
+          </p>
+        )}
       </form>
     </Modal>
   );
