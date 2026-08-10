@@ -6,7 +6,21 @@ import {
   clearStoredRefreshToken,
 } from './authStorage';
 
-export const BASE_URL = 'http://192.168.1.3:5050';
+/**
+ * Backend origin, read from VITE_API_BASE_URL in .env.
+ *
+ * Vite inlines this at build time, so a change needs a dev-server restart. A
+ * trailing slash is stripped because every path below is written with a leading
+ * one, and `.../` + `/api/...` would produce a double slash that some routers
+ * 404 on.
+ */
+export const BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
+
+if (!BASE_URL) {
+  // Without a base URL axios falls back to the page's own origin, where every
+  // call 404s against the dev server — a confusing failure to debug. Say it once.
+  console.error('VITE_API_BASE_URL is not set. Add it to .env and restart the dev server.');
+}
 
 /**
  * The access token lives in memory only — it dies with the tab.
