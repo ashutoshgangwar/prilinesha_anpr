@@ -1,7 +1,7 @@
 // src/api/mockData.js
 //
 // In-memory mock data used as a fallback when the backend at
-// http://localhost:5050 is not running yet. This lets the dashboard show
+// VITE_API_BASE_URL is not reachable. This lets the dashboard show
 // realistic data and lets add/delete work locally. Once the real APIs are
 // connected, this file is never hit (see dataService.js).
 

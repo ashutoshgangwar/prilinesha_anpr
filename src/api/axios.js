@@ -16,6 +16,7 @@ import {
  */
 export const BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
 
+
 if (!BASE_URL) {
   // Without a base URL axios falls back to the page's own origin, where every
   // call 404s against the dev server — a confusing failure to debug. Say it once.

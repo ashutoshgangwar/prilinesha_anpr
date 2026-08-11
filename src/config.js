@@ -3,7 +3,7 @@
 /**
  * Demo / offline login.
  *
- * When the backend at http://localhost:5050 is not running (or rejects the
+ * When the backend at VITE_API_BASE_URL is not reachable (or rejects the
  * login), the app falls back to a local "demo" session so the dashboard can
  * still be explored. This is purely a frontend convenience — no real token is
  * involved, and API calls that need the backend will simply show empty states.
