@@ -98,6 +98,8 @@ let vehicles = [
     id: String(++vehicleIdSeq).padStart(24, '0'),
     group_id: 'GRP-001',
     vehicle_number: 'MH12AB1234',
+    occupant_type: 'resident',
+    unit_number: 'B-402',
     vehicle_model: 'Maruti Swift',
     device_names: [],
     name: 'Rohit Sharma',
@@ -112,6 +114,8 @@ let vehicles = [
     id: String(++vehicleIdSeq).padStart(24, '0'),
     group_id: 'GRP-001',
     vehicle_number: 'DL8CAF5030',
+    occupant_type: 'resident',
+    unit_number: 'A-101',
     vehicle_model: 'Hyundai i20',
     device_names: ['entry1', 'exit1'],
     name: 'Anita Verma',
@@ -126,6 +130,8 @@ let vehicles = [
     id: String(++vehicleIdSeq).padStart(24, '0'),
     group_id: 'GRP-001',
     vehicle_number: 'KA05MJ6789',
+    occupant_type: 'resident',
+    unit_number: 'C-1204',
     vehicle_model: 'Honda Activa',
     device_names: ['ramp1'],
     name: 'Suresh Rao',
@@ -140,6 +146,8 @@ let vehicles = [
     id: String(++vehicleIdSeq).padStart(24, '0'),
     group_id: 'GRP-002',
     vehicle_number: 'TN09BC4521',
+    occupant_type: 'tenant',
+    unit_number: 'Bay 12',
     vehicle_model: 'Tata Ace',
     device_names: [],
     name: 'Logistics Co.',
@@ -158,6 +166,8 @@ let vehicles = [
     id: String(++vehicleIdSeq).padStart(24, '0'),
     group_id: 'GRP-002',
     vehicle_number: 'GJ01CD7788',
+    occupant_type: 'tenant',
+    unit_number: 'Bay 3',
     vehicle_model: 'Ashok Leyland Viking',
     device_names: [],
     name: 'City Transit',
@@ -584,6 +594,7 @@ export function getVehicles(params = {}) {
     valid_from: validFrom,
     valid_to: validTo,
     expiring_in_days: expiringInDays,
+    occupant_type: occupantType,
   } = params;
 
   let items = [...vehicles]
@@ -591,10 +602,11 @@ export function getVehicles(params = {}) {
     .map(decorate);
 
   if (groupId) items = items.filter((v) => v.group_id === groupId);
+  if (occupantType) items = items.filter((v) => v.occupant_type === occupantType);
   if (search) {
     const q = String(search).toLowerCase();
     items = items.filter((v) =>
-      [v.vehicle_number, v.name, v.phone_number, v.vehicle_model]
+      [v.vehicle_number, v.name, v.phone_number, v.vehicle_model, v.unit_number]
         .filter(Boolean)
         .some((f) => String(f).toLowerCase().includes(q))
     );
@@ -738,9 +750,18 @@ export function getVehicleFilters(params = {}) {
     if (v.registered_by?.id) actors.set(v.registered_by.id, v.registered_by);
   });
 
+  // resident + tenant + unspecified = total, so the breakdown always adds up.
+  const byOccupantType = { resident: 0, tenant: 0 };
+  let unspecifiedOccupants = 0;
+  scoped.forEach((v) => {
+    if (v.occupant_type && v.occupant_type in byOccupantType) byOccupantType[v.occupant_type] += 1;
+    else unspecifiedOccupants += 1;
+  });
+
   return {
     ...scopedGates(groupId),
     statuses: ['registered', 'unregistered'],
+    occupant_types: ['resident', 'tenant'],
     registered_by: [...actors.values()]
       .map((a) => ({ id: a.id, name: a.name ?? null, email: a.email ?? null }))
       .sort((a, b) => String(a.name).localeCompare(String(b.name))),
@@ -750,6 +771,7 @@ export function getVehicleFilters(params = {}) {
       unregistered: expired.length + deactivated.length,
       expired: expired.length,
       deactivated: deactivated.length,
+      by_occupant_type: { ...byOccupantType, unspecified: unspecifiedOccupants },
     },
     expiring_soon: {
       within_days: EXPIRING_SOON_DAYS,
@@ -771,8 +793,12 @@ export function updateVehicle(id, payload) {
   const found = findVehicle(id);
   if (!found) return null;
 
-  for (const field of ['name', 'phone_number', 'is_active']) {
+  for (const field of ['name', 'phone_number', 'is_active', 'occupant_type']) {
     if (payload[field] !== undefined) found[field] = payload[field];
+  }
+  // "" clears the unit, as it does on the API.
+  if (payload.unit_number !== undefined) {
+    found.unit_number = payload.unit_number || null;
   }
   // "" is a real edit meaning "no model", normalised to null like the API does.
   if (payload.vehicle_model !== undefined) {
@@ -828,6 +854,10 @@ export function createVehicle(payload) {
       phone_number: payload.phone_number,
       valid_till: validTill,
       device_names: payload.device_names || [],
+      // Omitted means "the word this site uses", which the API fills in from
+      // the project's own type rather than leaving blank.
+      occupant_type: payload.occupant_type || occupantTypeOf(groupId),
+      unit_number: payload.unit_number || existing.unit_number || null,
       updated_at: new Date().toISOString(),
     });
     return { created: false, vehicle: decorate(existing) };
@@ -842,6 +872,8 @@ export function createVehicle(payload) {
     device_names: payload.device_names || [],
     name: payload.name,
     phone_number: payload.phone_number,
+    occupant_type: payload.occupant_type || occupantTypeOf(groupId),
+    unit_number: payload.unit_number || null,
     valid_till: validTill,
     is_active: true,
     registered_by: DEMO_ACTOR,
@@ -1317,4 +1349,448 @@ export function getAnalyticsFilters(params = {}) {
     limits: { max_buckets: ANALYTICS_MAX_BUCKETS },
     timezone: params.timezone || REPORT_TIMEZONE,
   };
+}
+
+// ---- Visitor passes ----------------------------------------------------------
+// Offline stand-in for /api/visitors. Mirrors the server's own derivation: a
+// pass is live only while it is switched on AND inside its window, and the three
+// ways it can fail are kept apart, because "not yet", "ran out" and "we took it
+// away" are three different situations with three different fixes.
+
+let visitorIdSeq = 900;
+
+/** Whole days from now, as an instant. */
+const hoursFromNow = (h) => new Date(Date.now() + h * 3600000).toISOString();
+
+const MAX_VISITOR_PASS_DAYS = 30;
+
+/** Society → resident, parking → tenant. The word the customer actually uses. */
+const PROJECT_TYPE_OCCUPANTS = { society: 'resident', parking: 'tenant' };
+
+const occupantTypeOf = (groupId) =>
+  PROJECT_TYPE_OCCUPANTS[
+    String(projects.find((p) => p.group_id === groupId)?.project_type ?? '').toLowerCase()
+  ] ?? null;
+
+/** Why a pass is not currently good, or null while it is. */
+const inactiveReasonOf = (record, at) => {
+  if (record.is_active === false) return 'revoked';
+  const now = at.getTime();
+  if (now < new Date(record.valid_from).getTime()) return 'not_started';
+  if (now > new Date(record.valid_till).getTime()) return 'expired';
+  return null;
+};
+
+/** Shapes a stored pass the way GET /api/visitors returns it. */
+const decorateVisitor = (record, now = new Date()) => {
+  const validFrom = new Date(record.valid_from);
+  const validTill = new Date(record.valid_till);
+  const reason = inactiveReasonOf(record, now);
+  const host = vehicles.find((v) => v.id === record.host_vehicle_id) ?? null;
+
+  return {
+    id: record.id,
+    group_id: record.group_id,
+    vehicle_number: record.vehicle_number,
+    name: record.name,
+    phone_number: record.phone_number ?? null,
+    vehicle_model: record.vehicle_model ?? null,
+    purpose: record.purpose ?? null,
+
+    // The host's details are stored ON the pass, so it still says who admitted
+    // this vehicle after their own registration is renamed or deleted.
+    host: {
+      type: record.host_type ?? null,
+      vehicle_id: record.host_vehicle_id ?? null,
+      vehicle_number: host?.vehicle_number ?? null,
+      name: record.host_name,
+      phone_number: record.host_phone ?? null,
+      unit_number: record.host_unit ?? null,
+    },
+
+    valid_from: validFrom.toISOString(),
+    valid_till: validTill.toISOString(),
+    device_names: record.device_names ?? [],
+    is_active: record.is_active !== false,
+
+    status: reason ? 'unregistered' : 'registered',
+    inactive_reason: reason,
+
+    // Minutes, not days: a pass is usually an afternoon, and a day countdown
+    // would read 0 for its whole useful life. Negative once the window closed.
+    minutes_remaining:
+      reason === 'not_started'
+        ? null
+        : Math.ceil((validTill.getTime() - now.getTime()) / 60000),
+    window_minutes: Math.round((validTill.getTime() - validFrom.getTime()) / 60000),
+
+    issued_by: record.issued_by ?? DEMO_ACTOR,
+    updated_by: record.updated_by ?? DEMO_ACTOR,
+    created_at: record.created_at,
+    updated_at: record.updated_at,
+  };
+};
+
+// One of each state, so every chip and badge has a subject offline.
+let visitorPasses = [
+  {
+    id: String(++visitorIdSeq).padStart(24, '0'),
+    group_id: 'GRP-001',
+    vehicle_number: 'DL9CX4477',
+    name: 'Amit Verma',
+    phone_number: '+91 98111 22334',
+    vehicle_model: 'Hyundai Creta',
+    purpose: 'Guest of B-402',
+    host_type: 'resident',
+    host_vehicle_id: null,
+    host_name: 'Ravi Sharma',
+    host_phone: '+91 98100 11223',
+    host_unit: 'B-402',
+    valid_from: hoursFromNow(-2),
+    valid_till: hoursFromNow(4),
+    device_names: [],
+    is_active: true,
+    issued_by: DEMO_ACTOR,
+    updated_by: DEMO_ACTOR,
+    created_at: at(0, 9, 15),
+    updated_at: at(0, 9, 15),
+  },
+  {
+    id: String(++visitorIdSeq).padStart(24, '0'),
+    group_id: 'GRP-001',
+    vehicle_number: 'HR26AB0099',
+    name: 'Cool Air Services',
+    phone_number: '+91 99999 88776',
+    vehicle_model: 'Tata Ace',
+    purpose: 'AC servicing',
+    host_type: 'resident',
+    host_vehicle_id: null,
+    host_name: 'Neha Gupta',
+    host_phone: null,
+    host_unit: 'A-101',
+    valid_from: hoursFromNow(20),
+    valid_till: hoursFromNow(26),
+    device_names: ['entry1', 'exit1'],
+    is_active: true,
+    issued_by: DEMO_ACTOR,
+    updated_by: DEMO_ACTOR,
+    created_at: at(0, 11, 0),
+    updated_at: at(0, 11, 0),
+  },
+  {
+    id: String(++visitorIdSeq).padStart(24, '0'),
+    group_id: 'GRP-002',
+    vehicle_number: 'MH02ZZ1212',
+    name: 'Priya Nair',
+    phone_number: '+91 90000 12121',
+    vehicle_model: null,
+    purpose: 'Meeting',
+    host_type: 'tenant',
+    host_vehicle_id: null,
+    host_name: 'Phoenix Retail Ops',
+    host_phone: null,
+    host_unit: 'Bay 12',
+    valid_from: at(2, 10, 0),
+    valid_till: at(2, 18, 0),
+    device_names: [],
+    is_active: true,
+    issued_by: DEMO_ACTOR,
+    updated_by: DEMO_ACTOR,
+    created_at: at(2, 9, 30),
+    updated_at: at(2, 9, 30),
+  },
+  {
+    id: String(++visitorIdSeq).padStart(24, '0'),
+    group_id: 'GRP-001',
+    vehicle_number: 'UP14QQ7788',
+    name: 'Rakesh Yadav',
+    phone_number: null,
+    vehicle_model: 'Bajaj Chetak',
+    purpose: 'Delivery',
+    host_type: 'resident',
+    host_vehicle_id: null,
+    host_name: 'Ravi Sharma',
+    host_phone: '+91 98100 11223',
+    host_unit: 'B-402',
+    valid_from: hoursFromNow(-6),
+    valid_till: hoursFromNow(6),
+    // Revoked: reads as unregistered at every gate whatever the window says.
+    is_active: false,
+    device_names: [],
+    issued_by: DEMO_ACTOR,
+    updated_by: DEMO_ACTOR,
+    created_at: at(0, 8, 0),
+    updated_at: at(0, 12, 30),
+  },
+];
+
+/** An axios-shaped rejection, so callers read it exactly like a real one. */
+const apiError = (status, message) =>
+  Object.assign(new Error(message), {
+    response: { status, data: { success: false, message } },
+  });
+
+const overlaps = (a, b) =>
+  new Date(a.valid_from) <= new Date(b.valid_till) &&
+  new Date(b.valid_from) <= new Date(a.valid_till);
+
+export function getVisitors(params = {}) {
+  const {
+    page = 1,
+    limit = 25,
+    group_id: groupId,
+    search,
+    status,
+    is_active: isActive,
+    on_site: onSite,
+    host_vehicle_id: hostVehicleId,
+    issued_by: issuedBy,
+    device_name: deviceName,
+    from,
+    to,
+  } = params;
+
+  const now = new Date();
+  let items = visitorPasses.map((r) => decorateVisitor(r, now));
+
+  if (groupId) items = items.filter((v) => v.group_id === groupId);
+
+  if (search) {
+    const q = String(search).toLowerCase();
+    items = items.filter((v) =>
+      [
+        v.vehicle_number,
+        v.name,
+        v.phone_number,
+        v.vehicle_model,
+        v.host.name,
+        v.host.unit_number,
+        v.purpose,
+      ]
+        .filter(Boolean)
+        .some((field) => String(field).toLowerCase().includes(q))
+    );
+  }
+
+  if (status) items = items.filter((v) => v.status === status);
+
+  if (isActive !== undefined && isActive !== '') {
+    const want = isActive === true || isActive === 'true';
+    items = items.filter((v) => v.is_active === want);
+  }
+
+  if (onSite !== undefined && onSite !== '') {
+    const want = onSite === true || onSite === 'true';
+    items = items.filter((v) => (v.status === 'registered') === want);
+  }
+
+  if (hostVehicleId) items = items.filter((v) => v.host.vehicle_id === hostVehicleId);
+  if (issuedBy) items = items.filter((v) => v.issued_by?.id === issuedBy);
+
+  // An empty device list is the wildcard meaning every gate, so those passes
+  // count at this gate too — the same rule the registry uses.
+  if (deviceName) {
+    const gate = String(deviceName).toLowerCase();
+    items = items.filter(
+      (v) =>
+        v.device_names.length === 0 ||
+        v.device_names.some((n) => n.toLowerCase() === gate)
+    );
+  }
+
+  // "Which passes touch this period?" — an overlap test, not containment.
+  if (from) items = items.filter((v) => new Date(v.valid_till) >= new Date(from));
+  if (to) items = items.filter((v) => new Date(v.valid_from) <= new Date(to));
+
+  items.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+  const total = items.length;
+  const perPage = Number(limit);
+  const currentPage = Number(page);
+  const totalPages = Math.max(1, Math.ceil(total / perPage));
+  const start = (currentPage - 1) * perPage;
+
+  return {
+    items: items.slice(start, start + perPage),
+    total,
+    pagination: {
+      page: currentPage,
+      limit: perPage,
+      total,
+      total_pages: totalPages,
+      has_next: currentPage < totalPages,
+      has_previous: currentPage > 1,
+    },
+  };
+}
+
+export function getVisitorFilters(params = {}) {
+  const { group_id: groupId } = params;
+  const now = new Date();
+  const scoped = (groupId
+    ? visitorPasses.filter((v) => v.group_id === groupId)
+    : visitorPasses
+  ).map((r) => decorateVisitor(r, now));
+
+  // The four states partition the collection exactly, with revoked counted
+  // first: a revoked pass is revoked whether or not its window also ran out.
+  const revoked = scoped.filter((v) => !v.is_active);
+  const live = scoped.filter((v) => v.is_active && v.status === 'registered');
+  const upcoming = scoped.filter((v) => v.is_active && v.inactive_reason === 'not_started');
+  const expired = scoped.filter((v) => v.is_active && v.inactive_reason === 'expired');
+
+  const actors = new Map();
+  scoped.forEach((v) => {
+    if (v.issued_by?.id) actors.set(v.issued_by.id, v.issued_by);
+  });
+
+  return {
+    statuses: ['registered', 'unregistered'],
+    issued_by: [...actors.values()].map((a) => ({
+      id: a.id,
+      name: a.name ?? null,
+      email: a.email ?? null,
+    })),
+    counts: {
+      total: scoped.length,
+      on_site: live.length,
+      upcoming: upcoming.length,
+      expired: expired.length,
+      revoked: revoked.length,
+    },
+    paging: { default_limit: 25, max_limit: 200 },
+  };
+}
+
+export function getVisitor(id) {
+  const found = visitorPasses.find((v) => v.id === id);
+  if (!found) throw apiError(404, 'Visitor pass not found.');
+  return decorateVisitor(found);
+}
+
+export function createVisitor(payload) {
+  const now = new Date().toISOString();
+  const groupId = payload.group_id || projects[0]?.group_id;
+
+  const validFrom = new Date(payload.valid_from);
+  const validTill = new Date(payload.valid_till);
+
+  if (validTill <= validFrom) {
+    throw apiError(400, 'valid_till must be after valid_from.');
+  }
+  if (validTill - validFrom > MAX_VISITOR_PASS_DAYS * 86400000) {
+    throw apiError(400, `A visitor pass may run for at most ${MAX_VISITOR_PASS_DAYS} days.`);
+  }
+
+  const plate = String(payload.vehicle_number).toUpperCase();
+
+  // Two live records for one plate would put contradictory rows in front of
+  // Intozi, so both a standing registration and an overlapping pass are refused.
+  if (vehicles.some((v) => v.group_id === groupId && v.vehicle_number === plate)) {
+    throw apiError(409, `${plate} is already a registered vehicle in this project.`);
+  }
+  const clash = visitorPasses.find(
+    (v) =>
+      v.group_id === groupId &&
+      v.vehicle_number === plate &&
+      overlaps(v, { valid_from: validFrom, valid_till: validTill })
+  );
+  if (clash) {
+    throw apiError(409, `${plate} already holds a pass overlapping that window here.`);
+  }
+
+  const host = payload.host_vehicle_id
+    ? vehicles.find((v) => v.id === payload.host_vehicle_id)
+    : null;
+
+  const pass = {
+    id: String(++visitorIdSeq).padStart(24, '0'),
+    group_id: groupId,
+    vehicle_number: plate,
+    name: payload.name,
+    phone_number: payload.phone_number || null,
+    vehicle_model: payload.vehicle_model || null,
+    purpose: payload.purpose || null,
+    host_type: occupantTypeOf(groupId),
+    host_vehicle_id: payload.host_vehicle_id || null,
+    // Copied from the linked registration when there is one, typed otherwise.
+    host_name: host?.name || payload.host_name,
+    host_phone: host?.phone_number || payload.host_phone || null,
+    host_unit: host?.unit_number || payload.host_unit || null,
+    valid_from: validFrom.toISOString(),
+    valid_till: validTill.toISOString(),
+    device_names: payload.all_devices
+      ? (projects.find((p) => p.group_id === groupId)?.devices ?? []).map(
+          (d) => d.device_name
+        )
+      : payload.device_names || [],
+    is_active: true,
+    issued_by: DEMO_ACTOR,
+    updated_by: DEMO_ACTOR,
+    created_at: now,
+    updated_at: now,
+  };
+
+  visitorPasses = [pass, ...visitorPasses];
+  return decorateVisitor(pass);
+}
+
+export function updateVisitor(id, payload) {
+  const found = visitorPasses.find((v) => v.id === id);
+  if (!found) throw apiError(404, 'Visitor pass not found.');
+
+  for (const field of ['name', 'phone_number', 'vehicle_model', 'purpose', 'host_unit']) {
+    if (payload[field] !== undefined) found[field] = payload[field] || null;
+  }
+  if (payload.host_name !== undefined) found.host_name = payload.host_name;
+  if (payload.host_phone !== undefined) found.host_phone = payload.host_phone || null;
+  if (payload.host_vehicle_id !== undefined) {
+    found.host_vehicle_id = payload.host_vehicle_id || null;
+    const host = vehicles.find((v) => v.id === found.host_vehicle_id);
+    if (host) {
+      found.host_name = host.name;
+      found.host_phone = host.phone_number ?? null;
+      found.host_unit = host.unit_number ?? null;
+    }
+  }
+  if (payload.valid_from !== undefined) {
+    found.valid_from = new Date(payload.valid_from).toISOString();
+  }
+  if (payload.valid_till !== undefined) {
+    found.valid_till = new Date(payload.valid_till).toISOString();
+  }
+  if (payload.device_names !== undefined) found.device_names = payload.device_names;
+  if (payload.all_devices) {
+    found.device_names = (
+      projects.find((p) => p.group_id === found.group_id)?.devices ?? []
+    ).map((d) => d.device_name);
+  }
+  if (payload.is_active !== undefined) found.is_active = payload.is_active;
+
+  // A widened window can create the very overlap a create would be refused for.
+  const clash = visitorPasses.find(
+    (v) => v.id !== found.id && v.group_id === found.group_id &&
+      v.vehicle_number === found.vehicle_number && overlaps(v, found)
+  );
+  if (clash) {
+    throw apiError(409, `${found.vehicle_number} already holds a pass overlapping that window here.`);
+  }
+
+  found.updated_at = new Date().toISOString();
+  return decorateVisitor(found);
+}
+
+export function setVisitorStatus(id, isActive) {
+  const found = visitorPasses.find((v) => v.id === id);
+  if (!found) throw apiError(404, 'Visitor pass not found.');
+  found.is_active = isActive;
+  found.updated_at = new Date().toISOString();
+  return decorateVisitor(found);
+}
+
+export function deleteVisitor(id) {
+  const found = visitorPasses.find((v) => v.id === id);
+  if (!found) throw apiError(404, 'Visitor pass not found.');
+  visitorPasses = visitorPasses.filter((v) => v.id !== id);
+  return decorateVisitor(found);
 }

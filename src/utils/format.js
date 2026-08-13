@@ -27,6 +27,32 @@ export const formatDate = (value) => {
 };
 
 /**
+ * A stored instant → the "yyyy-MM-ddTHH:mm" an <input type="datetime-local">
+ * shows, in the operator's own zone.
+ */
+export const toLocalDateTimeInput = (value) => {
+  if (!value) return '';
+  const date = value instanceof Date ? value : new Date(value);
+  if (!isValid(date)) return '';
+  return format(date, "yyyy-MM-dd'T'HH:mm");
+};
+
+/**
+ * The reverse: a datetime-local value → a full ISO instant with its offset.
+ *
+ * This conversion is not optional. The visitor API reads a timestamp with no
+ * timezone as **UTC**, so posting the raw "2026-08-14T14:00" out of the input
+ * would store 14:00 UTC — 19:30 for an operator in IST, five and a half hours
+ * after the visitor was actually expected. Parsing it as local time and sending
+ * the instant is what makes the pass mean the time on the operator's clock.
+ */
+export const fromLocalDateTimeInput = (value) => {
+  if (!value) return '';
+  const date = new Date(value); // no offset in the string → parsed as local
+  return isValid(date) ? date.toISOString() : '';
+};
+
+/**
  * The backend may return paginated lists under different keys.
  * This normalizes the common shapes into { items, total, pagination }.
  *

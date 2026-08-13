@@ -21,6 +21,8 @@ const EMPTY_FORM = {
   name: '',
   phone_number: '',
   vehicle_model: '',
+  occupant_type: '',
+  unit_number: '',
   valid_till: '',
   device_names: [],
 };
@@ -97,6 +99,8 @@ const formFromVehicle = (vehicle) => ({
   name: vehicle.name || '',
   phone_number: vehicle.phone_number || '',
   vehicle_model: vehicle.vehicle_model || '',
+  occupant_type: vehicle.occupant_type || '',
+  unit_number: vehicle.unit_number || '',
   valid_till: vehicle.valid_till ? String(vehicle.valid_till).slice(0, 10) : '',
   device_names: vehicle.device_names || [],
 });
@@ -373,6 +377,9 @@ export default function VehicleFormModal({
     if (form.vehicle_model.trim().length > 100)
       next.vehicle_model = 'Must be at most 100 characters';
 
+    if (form.unit_number.trim().length > 50)
+      next.unit_number = 'Must be at most 50 characters';
+
     if (!form.valid_till) next.valid_till = 'Expiry date is required';
 
     if (gateMode === GATE_SPECIFIC) {
@@ -414,6 +421,10 @@ export default function VehicleFormModal({
       // normalises to null server-side.
       if (form.vehicle_model.trim() !== (vehicle.vehicle_model || ''))
         payload.vehicle_model = form.vehicle_model.trim();
+      if (form.occupant_type !== (vehicle.occupant_type || ''))
+        payload.occupant_type = form.occupant_type;
+      if (form.unit_number.trim() !== (vehicle.unit_number || ''))
+        payload.unit_number = form.unit_number.trim();
 
       if (gateMode === GATE_ALL_NAMED) {
         // Counts as an edit on its own. The server expands it to the gates that
@@ -438,6 +449,11 @@ export default function VehicleFormModal({
         valid_till: form.valid_till,
       };
       if (form.vehicle_model.trim()) payload.vehicle_model = form.vehicle_model.trim();
+      // Omitted on purpose when blank: the API fills the word in from the
+      // project's own type, which is the right answer more often than a guess
+      // made here.
+      if (form.occupant_type) payload.occupant_type = form.occupant_type;
+      if (form.unit_number.trim()) payload.unit_number = form.unit_number.trim();
       // Omitted entirely when the server is to infer it — sending "" would be a
       // validation error rather than the "use my only project" it looks like.
       if (form.group_id) payload.group_id = form.group_id;
@@ -590,6 +606,44 @@ export default function VehicleFormModal({
             maxLength={100}
           />
         </Field>
+
+        {/* Who the vehicle belongs to at this site. The word differs by site
+            type — a society has residents, a parking project has tenants — so
+            leaving it blank lets the API stamp the right one from the project
+            rather than guessing here. Sending the wrong kind is a 400 naming
+            the right one; `visitor` belongs on a pass, not on the registry. */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field
+            label="Occupant type"
+            error={errors.occupant_type}
+            hint="Blank takes the project's own word for it."
+          >
+            <select
+              value={form.occupant_type}
+              onChange={(e) => update('occupant_type', e.target.value)}
+              className={inputClass('occupant_type')}
+            >
+              <option value="">From the project</option>
+              <option value="resident">Resident</option>
+              <option value="tenant">Tenant</option>
+            </select>
+          </Field>
+
+          <Field
+            label="Flat / unit"
+            error={errors.unit_number}
+            hint="How a guard identifies them, e.g. B-402 or Bay 12."
+          >
+            <input
+              type="text"
+              value={form.unit_number}
+              onChange={(e) => update('unit_number', e.target.value)}
+              className={inputClass('unit_number')}
+              placeholder="B-402"
+              maxLength={50}
+            />
+          </Field>
+        </div>
 
         <Field label="Phone number *" error={errors.phone_number}>
           <input

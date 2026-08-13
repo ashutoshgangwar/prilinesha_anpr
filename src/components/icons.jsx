@@ -69,6 +69,15 @@ export const VehiclesIcon = ({ className = 'h-5 w-5' }) => (
   </svg>
 );
 
+/** A guest at the gate — a person beside the barrier, not a vehicle. */
+export const VisitorsIcon = ({ className = 'h-5 w-5' }) => (
+  <svg viewBox="0 0 24 24" className={className} {...base}>
+    <circle cx="9" cy="8" r="3.2" />
+    <path d="M3.5 20a5.5 5.5 0 0 1 11 0" />
+    <path d="M18 5v14M18 8h3M18 12h3" />
+  </svg>
+);
+
 export const CamerasIcon = ({ className = 'h-5 w-5' }) => (
   <svg viewBox="0 0 24 24" className={className} {...base}>
     <path d="M3 8a2 2 0 0 1 2-2h2l1.5-2h7L17 6h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8Z" />

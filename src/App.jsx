@@ -11,6 +11,7 @@ import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Logs from './pages/Logs';
 import Vehicles from './pages/Vehicles';
+import Visitors from './pages/Visitors';
 import Projects from './pages/Projects';
 
 /**
@@ -42,6 +43,7 @@ const router = createBrowserRouter([
           { path: '/', element: <Dashboard /> },
           { path: '/logs', element: <Logs /> },
           { path: '/vehicles', element: <Vehicles /> },
+          { path: '/visitors', element: <Visitors /> },
           { path: '/projects', element: <Projects /> },
         ],
       },

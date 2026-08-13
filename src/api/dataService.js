@@ -250,6 +250,126 @@ export async function deleteVehicle(id) {
   }
 }
 
+// ---- Visitor passes ----------------------------------------------------------
+// The temporary half of a project's access list: one plate, one host, one
+// window. Kept apart from /api/vehicles because they are different records with
+// different lifetimes — a registration says a vehicle belongs here and is
+// renewed for years, a pass says one is expected this afternoon and by whose
+// invitation.
+//
+// Status is derived on every read from the window and the switch, exactly as on
+// the registry, so nothing has to run at closing time for a pass to stop
+// working. `inactive_reason` says which of the three ways it is not live.
+//
+// Behind visitor:read / visitor:write, which customer admins hold too.
+
+/**
+ * GET /api/visitors — the pass table.
+ *
+ * Params: group_id, search, status (registered|unregistered), is_active,
+ * on_site, host_vehicle_id, issued_by, device_name, from, to, page, limit.
+ *
+ * from/to are an overlap test, not containment: a pass running 10:00–18:00 is
+ * part of the afternoon even though it did not start in it.
+ */
+export async function fetchVisitors(params = {}) {
+  try {
+    const resp = await api.get('/api/visitors', { params });
+    return normalizeListResponse(resp.data);
+  } catch (err) {
+    if (shouldFallback(err)) return mock.getVisitors(params);
+    throw err;
+  }
+}
+
+/**
+ * GET /api/visitors/filters — the chips above the table and the count behind
+ * each, plus the operators who have issued something.
+ *
+ * The four counts partition the collection exactly: on_site + upcoming +
+ * expired + revoked = total. Unlike the vehicle and log filter payloads this one
+ * carries no project or gate list, so those come from the token's own scope.
+ */
+export async function fetchVisitorFilters(params = {}) {
+  try {
+    const resp = await api.get('/api/visitors/filters', { params });
+    return resp.data?.data ?? resp.data;
+  } catch (err) {
+    if (shouldFallback(err)) return mock.getVisitorFilters(params);
+    throw err;
+  }
+}
+
+export async function fetchVisitor(id) {
+  try {
+    const resp = await api.get(`/api/visitors/${id}`);
+    return resp.data?.data ?? resp.data;
+  } catch (err) {
+    if (shouldFallback(err)) return mock.getVisitor(id);
+    throw err;
+  }
+}
+
+/**
+ * POST /api/visitors — issues a pass. Always a new record: a plate visiting
+ * again is a new visit, never a renewal, so there is no created flag to read.
+ *
+ * 409 when the plate is already registered here, or already holds a pass whose
+ * window overlaps this one — two live records for one plate would put
+ * contradictory rows in front of Intozi.
+ */
+export async function createVisitor(payload) {
+  try {
+    const resp = await api.post('/api/visitors', payload);
+    return resp.data?.data ?? resp.data;
+  } catch (err) {
+    if (shouldFallback(err)) return mock.createVisitor(payload);
+    throw err;
+  }
+}
+
+/**
+ * PATCH /api/visitors/:id — extends the window, corrects the host, restricts the
+ * gates. Only the fields sent change; group_id and vehicle_number are immutable,
+ * since a different plate is a different visit.
+ */
+export async function updateVisitor(id, payload) {
+  try {
+    const resp = await api.patch(`/api/visitors/${id}`, payload);
+    return resp.data?.data ?? resp.data;
+  } catch (err) {
+    if (shouldFallback(err)) return mock.updateVisitor(id, payload);
+    throw err;
+  }
+}
+
+/**
+ * PATCH /api/visitors/:id/status — revoke or reinstate.
+ *
+ * Revoking beats deleting: the plate reads as unregistered at every gate
+ * immediately, and the record of who was admitted, by whom, and when it was
+ * withdrawn survives.
+ */
+export async function setVisitorStatus(id, isActive) {
+  try {
+    const resp = await api.patch(`/api/visitors/${id}/status`, { is_active: isActive });
+    return resp.data?.data ?? resp.data;
+  } catch (err) {
+    if (shouldFallback(err)) return mock.setVisitorStatus(id, isActive);
+    throw err;
+  }
+}
+
+export async function deleteVisitor(id) {
+  try {
+    const resp = await api.delete(`/api/visitors/${id}`);
+    return resp.data?.data ?? resp.data;
+  } catch (err) {
+    if (shouldFallback(err)) return mock.deleteVisitor(id);
+    throw err;
+  }
+}
+
 // ---- Projects ----------------------------------------------------------------
 // Super admin only — every route below is behind requireSuperAdmin.
 

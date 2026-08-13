@@ -31,6 +31,7 @@ const EMPTY_FILTERS = {
   is_active: '',
   device_name: '',
   registered_by: '',
+  occupant_type: '',
   valid_from: '',
   valid_to: '',
   expiring_in_days: '',
@@ -192,6 +193,7 @@ export default function Vehicles() {
       if (filters.is_active !== '') params.is_active = filters.is_active === 'true';
       if (filters.device_name) params.device_name = filters.device_name;
       if (filters.registered_by) params.registered_by = filters.registered_by;
+      if (filters.occupant_type) params.occupant_type = filters.occupant_type;
       if (filters.valid_from) params.valid_from = filters.valid_from;
       if (filters.valid_to) params.valid_to = filters.valid_to;
       if (filters.expiring_in_days !== '')
@@ -316,7 +318,23 @@ export default function Vehicles() {
           </span>
         ),
       },
-      { key: 'name', header: 'Owner', render: (row) => row.name || '—' },
+      {
+        key: 'name',
+        header: 'Owner',
+        // The unit is how a guard actually identifies someone, and the
+        // occupant kind is the word this site uses for them — a society's
+        // resident, a parking project's tenant.
+        render: (row) => (
+          <div>
+            <span className="text-gray-900">{row.name || '—'}</span>
+            {(row.unit_number || row.occupant_type) && (
+              <p className="whitespace-nowrap text-xs text-gray-400">
+                {[row.unit_number, row.occupant_type].filter(Boolean).join(' · ')}
+              </p>
+            )}
+          </div>
+        ),
+      },
       {
         key: 'vehicle_model',
         header: 'Model',
@@ -565,7 +583,7 @@ export default function Vehicles() {
             type="text"
             value={draft.search}
             onChange={(e) => updateDraft('search', e.target.value)}
-            placeholder="Plate, owner, phone or model"
+            placeholder="Plate, owner, unit or model"
             maxLength={100}
             className={inputClass}
           />
@@ -598,6 +616,24 @@ export default function Vehicles() {
             <option value="false">Deactivated</option>
           </select>
         </label>
+
+        {options?.occupant_types?.length > 0 && (
+          <label className="flex flex-col">
+            <span className="mb-1 text-xs font-medium text-gray-500">Occupant</span>
+            <select
+              value={draft.occupant_type}
+              onChange={(e) => updateDraft('occupant_type', e.target.value)}
+              className={inputClass}
+            >
+              <option value="">Any</option>
+              {options.occupant_types.map((type) => (
+                <option key={type} value={type} className="capitalize">
+                  {type}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
 
         {/* "Who may come through this gate?" — the question a guard on one
             entrance asks. Registrations with no gates listed are the wildcard

@@ -7,19 +7,23 @@ import {
   DashboardIcon,
   LogsIcon,
   VehiclesIcon,
+  VisitorsIcon,
   CamerasIcon,
   LogoutIcon,
   MenuIcon,
   CloseIcon,
 } from './icons';
 
-// `superAdminOnly` mirrors the API: every /api/projects route sits behind
-// requireSuperAdmin, so showing the link to anyone else only offers a 403.
+// Each gate mirrors the API. `superAdminOnly`: every /api/projects route sits
+// behind requireSuperAdmin, so showing the link to anyone else only offers a
+// 403. `permission`: the visitor routes are behind visitor:read, which customer
+// admins hold too — so this is a real permission check rather than a role one.
 
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', icon: DashboardIcon, end: true },
   { to: '/logs', label: 'Logs', icon: LogsIcon },
   { to: '/vehicles', label: 'Vehicles', icon: VehiclesIcon },
+  { to: '/visitors', label: 'Visitors', icon: VisitorsIcon, permission: 'visitor:read' },
   { to: '/projects', label: 'Projects', icon: CamerasIcon, superAdminOnly: true },
 ];
 
@@ -29,7 +33,7 @@ const ROLE_LABELS = {
 };
 
 export default function Sidebar() {
-  const { logout, user, role, isDemo, isSuperAdmin } = useAuth();
+  const { logout, user, role, isDemo, isSuperAdmin, hasPermission } = useAuth();
   const [open, setOpen] = useState(false); // mobile drawer state
   const [signingOut, setSigningOut] = useState(false);
 
@@ -64,7 +68,11 @@ export default function Sidebar() {
 
       {/* Nav links */}
       <nav className="flex-1 space-y-1 px-3 py-4">
-        {NAV_ITEMS.filter((item) => !item.superAdminOnly || isSuperAdmin).map(
+        {NAV_ITEMS.filter(
+          (item) =>
+            (!item.superAdminOnly || isSuperAdmin) &&
+            (!item.permission || hasPermission(item.permission))
+        ).map(
           ({ to, label, icon: Icon, end }) => (
             <NavLink
               key={to}
