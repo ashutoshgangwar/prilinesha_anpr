@@ -858,3 +858,463 @@ export function createVehicle(payload) {
 
 
 
+// ---- Analytics ---------------------------------------------------------------
+// Offline stand-ins for GET /api/analytics/{filters,summary,traffic}.
+//
+// One deliberate simplification against the real API: buckets here are built in
+// the BROWSER's timezone rather than in the requested IANA zone. The server owns
+// that arithmetic (it cross-checks its bucket keys against MongoDB's own
+// $dateToString); reimplementing zone conversion in a fallback that only runs
+// when the backend is unreachable would be a second source of truth to keep
+// honest. The `timezone` a caller sends is echoed back so the UI still labels
+// itself correctly.
+
+const ANALYTICS_GRANULARITIES = ['hour', 'day', 'week', 'month'];
+const ANALYTICS_MAX_BUCKETS = 750;
+const ANALYTICS_DEFAULT_SPAN_DAYS = 30;
+const REPORT_TIMEZONE = 'Asia/Kolkata';
+
+const pad = (n) => String(n).padStart(2, '0');
+
+/** ISO week number — the week the server's `%G-W%V` key counts in. */
+const isoWeekParts = (date) => {
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  // Thursday decides which year an ISO week belongs to.
+  d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
+  const firstThursday = new Date(d.getFullYear(), 0, 4);
+  firstThursday.setDate(
+    firstThursday.getDate() + 3 - ((firstThursday.getDay() + 6) % 7)
+  );
+  const week = 1 + Math.round((d - firstThursday) / (7 * 86400000));
+  return { year: d.getFullYear(), week };
+};
+
+/** Mirrors the server's BUCKET_FORMATS, in local time. */
+const bucketKeyOf = (value, granularity) => {
+  const d = new Date(value);
+  switch (granularity) {
+    case 'hour':
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:00`;
+    case 'week': {
+      const { year, week } = isoWeekParts(d);
+      return `${year}-W${pad(week)}`;
+    }
+    case 'month':
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+    default:
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+};
+
+const startOfBucket = (value, granularity) => {
+  const d = new Date(value);
+  switch (granularity) {
+    case 'hour':
+      return new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours());
+    case 'week': {
+      const start = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      start.setDate(start.getDate() - ((start.getDay() + 6) % 7)); // ISO: Monday
+      return start;
+    }
+    case 'month':
+      return new Date(d.getFullYear(), d.getMonth(), 1);
+    default:
+      return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  }
+};
+
+const nextBucket = (date, granularity) => {
+  const d = new Date(date);
+  if (granularity === 'hour') d.setHours(d.getHours() + 1);
+  else if (granularity === 'week') d.setDate(d.getDate() + 7);
+  else if (granularity === 'month') d.setMonth(d.getMonth() + 1);
+  else d.setDate(d.getDate() + 1);
+  return d;
+};
+
+/** Every bucket the window covers, in order — the zero-fill the chart plots. */
+const enumerateBuckets = (from, to, granularity) => {
+  const keys = [];
+  let cursor = startOfBucket(from, granularity);
+  while (cursor <= to && keys.length <= ANALYTICS_MAX_BUCKETS) {
+    keys.push({ bucket: bucketKeyOf(cursor, granularity), starts_at: cursor.toISOString() });
+    cursor = nextBucket(cursor, granularity);
+  }
+  return keys;
+};
+
+const startOfLocalDay = (value) => {
+  const d = new Date(value);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+};
+
+const endOfLocalDay = (value) => {
+  const d = startOfLocalDay(value);
+  d.setDate(d.getDate() + 1);
+  return new Date(d.getTime() - 1);
+};
+
+/** A bare YYYY-MM-DD covers the whole of that local day, as the API's does. */
+const boundary = (value, edge) => {
+  if (!value) return null;
+  const raw = String(value);
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(raw)
+    ? new Date(Number(raw.slice(0, 4)), Number(raw.slice(5, 7)) - 1, Number(raw.slice(8, 10)))
+    : new Date(raw);
+  if (Number.isNaN(date.getTime())) return null;
+  return edge === 'end' ? endOfLocalDay(date) : startOfLocalDay(date);
+};
+
+const resolveWindow = ({ from, to, granularity }) => {
+  const bucket = ANALYTICS_GRANULARITIES.includes(granularity) ? granularity : 'day';
+  const now = new Date();
+
+  const end = boundary(to, 'end') ?? endOfLocalDay(now);
+  const fallbackStart = startOfLocalDay(end);
+  fallbackStart.setDate(fallbackStart.getDate() - (ANALYTICS_DEFAULT_SPAN_DAYS - 1));
+  const start = boundary(from, 'start') ?? fallbackStart;
+
+  return { from: start, to: end, granularity: bucket };
+};
+
+// Name hints, conservative in the same way the server's are: a name has to point
+// one way and only one way to be attributed at all.
+const ENTRY_HINTS = [/entr/, /ingress/, /inward/, /incoming/, /(^|[^a-z])in[\s_.-]?\d*([^a-z]|$)/];
+const EXIT_HINTS = [/exit/, /egress/, /outward/, /outgoing/, /(^|[^a-z])out[\s_.-]?\d*([^a-z]|$)/];
+
+const inferDirection = (deviceName) => {
+  const name = String(deviceName ?? '').toLowerCase();
+  if (!name) return null;
+  const looksEntry = ENTRY_HINTS.some((p) => p.test(name));
+  const looksExit = EXIT_HINTS.some((p) => p.test(name));
+  if (looksEntry && !looksExit) return 'entry';
+  if (looksExit && !looksEntry) return 'exit';
+  return null;
+};
+
+const deviceKey = (groupId, deviceName) =>
+  `${String(groupId ?? '').toUpperCase()}::${String(deviceName ?? '').trim().toLowerCase()}`;
+
+/**
+ * Gate → direction for every project in scope, plus where each direction came
+ * from. A gate configured `both` is deliberately left unresolved: it sees
+ * traffic in both directions and cannot be attributed either way.
+ */
+const buildDirectionIndex = (groupId) => {
+  const scoped = groupId ? projects.filter((p) => p.group_id === groupId) : projects;
+  const index = new Map();
+
+  const devices = scoped.flatMap((project) =>
+    (project.devices ?? []).map((device) => {
+      const configured = device.direction ?? null;
+      const usable = configured === 'entry' || configured === 'exit';
+      const direction = usable ? configured : inferDirection(device.device_name);
+
+      const entry = {
+        group_id: project.group_id,
+        device_name: device.device_name,
+        label: device.label ?? null,
+        configured_direction: configured,
+        direction: configured === 'both' ? null : direction,
+        direction_source: usable
+          ? 'configured'
+          : direction
+            ? 'inferred_from_name'
+            : 'unknown',
+        is_active: device.is_active !== false,
+      };
+      index.set(deviceKey(project.group_id, device.device_name), entry);
+      return entry;
+    })
+  );
+
+  const resolve = (group, name) =>
+    index.get(deviceKey(group, name)) ?? { direction: null, direction_source: 'unknown' };
+
+  return { resolve, devices };
+};
+
+const blankCounts = () => ({
+  entries: 0,
+  exits: 0,
+  unattributed: 0,
+  registered: 0,
+  unregistered: 0,
+  total: 0,
+});
+
+const addDetection = (counts, log, direction) => {
+  counts.total += 1;
+  if (direction === 'entry') counts.entries += 1;
+  else if (direction === 'exit') counts.exits += 1;
+  else counts.unattributed += 1;
+  if (log.vehicle_type === 'registered') counts.registered += 1;
+  else counts.unregistered += 1;
+};
+
+/** The events a report covers, after the shared filters. */
+const scopedEvents = (params, window, resolve) => {
+  const {
+    group_id: groupId,
+    device_name: deviceName,
+    vehicle_type: vehicleType,
+    vehicle_number: vehicleNumber,
+    direction,
+  } = params;
+
+  return logs.filter((log) => {
+    const at = new Date(log.detected_at);
+    if (at < window.from || at > window.to) return false;
+    if (groupId && log.group_id !== groupId) return false;
+    if (deviceName && log.device_name.toLowerCase() !== String(deviceName).toLowerCase()) {
+      return false;
+    }
+    if (vehicleType && log.vehicle_type !== vehicleType) return false;
+    if (
+      vehicleNumber &&
+      log.vehicle_number.toUpperCase() !== String(vehicleNumber).toUpperCase()
+    ) {
+      return false;
+    }
+    // Direction filters the GATE, so an unattributed gate is excluded by any
+    // direction filter rather than being counted under the one asked for.
+    if (direction && resolve(log.group_id, log.device_name).direction !== direction) {
+      return false;
+    }
+    return true;
+  });
+};
+
+/** Standing registry counts — a count of the register, never of a window. */
+const registryTotals = (groupId) => {
+  const scoped = groupId ? vehicles.filter((v) => v.group_id === groupId) : vehicles;
+  const now = Date.now();
+
+  const total = { total: 0, active: 0, expired: 0, deactivated: 0 };
+  const byProject = new Map();
+
+  scoped.forEach((v) => {
+    const counts =
+      byProject.get(v.group_id) ??
+      byProject.set(v.group_id, { total: 0, active: 0, expired: 0, deactivated: 0 }).get(v.group_id);
+
+    const bucket =
+      v.is_active === false
+        ? 'deactivated'
+        : new Date(v.valid_till).getTime() >= now
+          ? 'active'
+          : 'expired';
+
+    counts.total += 1;
+    counts[bucket] += 1;
+    total.total += 1;
+    total[bucket] += 1;
+  });
+
+  return { total, byProject };
+};
+
+const unattributedDevices = (devices) =>
+  devices
+    .filter((d) => d.direction === null || d.configured_direction === 'both')
+    .map(({ group_id, device_name, configured_direction }) => ({
+      group_id,
+      device_name,
+      configured_direction,
+    }));
+
+/** Per-project and per-gate breakdowns, shared by both reports. */
+const foldTraffic = (events, resolve) => {
+  const totals = blankCounts();
+  const byProject = new Map();
+  const byDevice = new Map();
+
+  events.forEach((log) => {
+    const gate = resolve(log.group_id, log.device_name);
+
+    addDetection(totals, log, gate.direction);
+
+    const project =
+      byProject.get(log.group_id) ??
+      byProject.set(log.group_id, blankCounts()).get(log.group_id);
+    addDetection(project, log, gate.direction);
+
+    const key = deviceKey(log.group_id, log.device_name);
+    const device =
+      byDevice.get(key) ??
+      byDevice
+        .set(key, {
+          group_id: log.group_id,
+          device_name: log.device_name,
+          direction: gate.direction,
+          direction_source: gate.direction_source,
+          count: 0,
+        })
+        .get(key);
+    device.count += 1;
+  });
+
+  return { totals, byProject, byDevice };
+};
+
+export function getAnalyticsSummary(params = {}) {
+  const groupId = params.group_id;
+  const window = resolveWindow({ ...params, granularity: 'day' });
+  const { resolve, devices } = buildDirectionIndex(groupId);
+  const registry = registryTotals(groupId);
+
+  const now = new Date();
+  const todayWindow = { from: startOfLocalDay(now), to: endOfLocalDay(now) };
+
+  const range = foldTraffic(scopedEvents(params, window, resolve), resolve);
+  const today = foldTraffic(scopedEvents(params, todayWindow, resolve), resolve);
+
+  // Quiet projects are rows of zeros, not missing rows.
+  const groupIds = new Set([
+    ...registry.byProject.keys(),
+    ...range.byProject.keys(),
+    ...devices.map((d) => d.group_id),
+  ]);
+
+  return {
+    range: {
+      from: window.from.toISOString(),
+      to: window.to.toISOString(),
+      timezone: params.timezone || REPORT_TIMEZONE,
+    },
+    filters: {
+      direction: params.direction ?? null,
+      device_name: params.device_name ?? null,
+      vehicle_type: params.vehicle_type ?? null,
+      vehicle_number: params.vehicle_number ?? null,
+    },
+    registered_vehicles: registry.total,
+    traffic: range.totals,
+    today: { date: bucketKeyOf(now, 'day'), ...today.totals },
+    by_project: [...groupIds]
+      .map((id) => ({
+        group_id: id,
+        registered_vehicles:
+          registry.byProject.get(id) ?? { total: 0, active: 0, expired: 0, deactivated: 0 },
+        traffic: range.byProject.get(id) ?? blankCounts(),
+        today: today.byProject.get(id) ?? blankCounts(),
+      }))
+      .sort((a, b) => b.traffic.total - a.traffic.total),
+    by_device: [...range.byDevice.values()].sort((a, b) => b.count - a.count),
+    unattributed_devices: unattributedDevices(devices),
+  };
+}
+
+export function getTrafficSeries(params = {}) {
+  const groupId = params.group_id;
+  const window = resolveWindow(params);
+  const { resolve, devices } = buildDirectionIndex(groupId);
+
+  const events = scopedEvents(params, window, resolve);
+  const { totals, byProject, byDevice } = foldTraffic(events, resolve);
+
+  const buckets = new Map(
+    enumerateBuckets(window.from, window.to, window.granularity).map((b) => [
+      b.bucket,
+      { ...b, ...blankCounts() },
+    ])
+  );
+
+  events.forEach((log) => {
+    const key = bucketKeyOf(log.detected_at, window.granularity);
+    const point = buckets.get(key);
+    if (point) addDetection(point, log, resolve(log.group_id, log.device_name).direction);
+  });
+
+  return {
+    range: {
+      from: window.from.toISOString(),
+      to: window.to.toISOString(),
+      timezone: params.timezone || REPORT_TIMEZONE,
+      granularity: window.granularity,
+    },
+    series: [...buckets.values()],
+    totals: {
+      entries: totals.entries,
+      exits: totals.exits,
+      unattributed: totals.unattributed,
+      total: totals.total,
+    },
+    by_project: [...byProject.entries()]
+      .map(([id, counts]) => ({ group_id: id, ...counts }))
+      .sort((a, b) => b.total - a.total),
+    by_device: [...byDevice.values()].sort((a, b) => b.count - a.count),
+    unattributed_devices: unattributedDevices(devices),
+  };
+}
+
+export function getAnalyticsFilters(params = {}) {
+  const groupId = params.group_id;
+  const { devices } = buildDirectionIndex(groupId);
+  const registry = registryTotals(groupId);
+
+  const scoped = groupId ? logs.filter((l) => l.group_id === groupId) : logs;
+  const times = scoped.map((l) => new Date(l.detected_at).getTime());
+
+  const now = new Date();
+  const asDate = (value) => bucketKeyOf(value, 'day');
+  const shiftDays = (days) => {
+    const d = startOfLocalDay(now);
+    d.setDate(d.getDate() + days);
+    return d;
+  };
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+
+  return {
+    ...scopedGates(groupId),
+    devices,
+    directions: ['entry', 'exit'],
+    granularities: [...ANALYTICS_GRANULARITIES],
+    vehicle_types: ['registered', 'unregistered'],
+    detected_between: {
+      from: times.length ? new Date(Math.min(...times)).toISOString() : null,
+      to: times.length ? new Date(Math.max(...times)).toISOString() : null,
+    },
+    // The date chips. from/to/granularity go back to the reports verbatim.
+    quick_ranges: [
+      { key: 'today', label: 'Today', from: asDate(now), to: asDate(now), granularity: 'hour' },
+      {
+        key: 'last_7_days',
+        label: 'Last 7 days',
+        from: asDate(shiftDays(-6)),
+        to: asDate(now),
+        granularity: 'day',
+      },
+      {
+        key: 'last_30_days',
+        label: 'Last 30 days',
+        from: asDate(shiftDays(-29)),
+        to: asDate(now),
+        granularity: 'day',
+      },
+      {
+        key: 'this_month',
+        label: 'This month',
+        from: asDate(monthStart),
+        to: asDate(now),
+        granularity: 'day',
+      },
+      {
+        key: 'last_12_months',
+        label: 'Last 12 months',
+        from: asDate(twelveMonthsAgo),
+        to: asDate(now),
+        granularity: 'month',
+      },
+    ],
+    registered_vehicles: registry.total,
+    defaults: {
+      timezone: REPORT_TIMEZONE,
+      granularity: 'day',
+      span_days: ANALYTICS_DEFAULT_SPAN_DAYS,
+    },
+    limits: { max_buckets: ANALYTICS_MAX_BUCKETS },
+    timezone: params.timezone || REPORT_TIMEZONE,
+  };
+}

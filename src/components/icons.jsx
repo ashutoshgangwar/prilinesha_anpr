@@ -82,6 +82,43 @@ export const LogoutIcon = ({ className = 'h-5 w-5' }) => (
   </svg>
 );
 
+export const ChartIcon = ({ className = 'h-5 w-5' }) => (
+  <svg viewBox="0 0 24 24" className={className} {...base}>
+    <path d="M4 20V4M4 20h16" />
+    <path d="M8 20v-6M13 20V9M18 20v-9" />
+  </svg>
+);
+
+export const TableIcon = ({ className = 'h-5 w-5' }) => (
+  <svg viewBox="0 0 24 24" className={className} {...base}>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <path d="M3 10h18M9 10v10" />
+  </svg>
+);
+
+/** Into the site — the arrow points at the gate. */
+export const EntryIcon = ({ className = 'h-5 w-5' }) => (
+  <svg viewBox="0 0 24 24" className={className} {...base}>
+    <path d="M4 12h11m0 0-4-4m4 4-4 4" />
+    <path d="M19 4v16" />
+  </svg>
+);
+
+/** Out of the site — the arrow leaves the gate. */
+export const ExitIcon = ({ className = 'h-5 w-5' }) => (
+  <svg viewBox="0 0 24 24" className={className} {...base}>
+    <path d="M9 12h11m0 0-4-4m4 4-4 4" />
+    <path d="M5 4v16" />
+  </svg>
+);
+
+export const AlertIcon = ({ className = 'h-5 w-5' }) => (
+  <svg viewBox="0 0 24 24" className={className} {...base}>
+    <path d="M12 4 2.5 20h19L12 4Z" />
+    <path d="M12 10v4M12 17h.01" />
+  </svg>
+);
+
 export const PlateIcon = ({ className = 'h-5 w-5' }) => (
   <svg viewBox="0 0 24 24" className={className} {...base}>
     <rect x="2" y="6" width="20" height="12" rx="2" />

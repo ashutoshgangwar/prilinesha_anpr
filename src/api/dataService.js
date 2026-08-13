@@ -65,6 +65,74 @@ export async function fetchLogFilters(params = {}) {
   }
 }
 
+// ---- Analytics ---------------------------------------------------------------
+// The three reads behind the dashboard home page. All take the same filters, so
+// one filter bar built from /analytics/filters drives both reports.
+//
+// Direction (entry vs exit) is a property of the GATE, not of the detection: it
+// is configured per device on the project. Gates that resolve to neither are
+// counted as `unattributed` rather than guessed into entries or exits — which is
+// why entries + exits does not always equal total.
+
+/**
+ * GET /api/analytics/filters — everything the reporting filter bar can offer.
+ *
+ * Called once when the dashboard opens. Carries the caller's projects and gates
+ * (each with the direction the reports will actually use and where it came
+ * from), the granularities, the standing registry counts, and `quick_ranges` —
+ * the date chips, already resolved in the report timezone, whose from/to/
+ * granularity are sent back verbatim.
+ */
+export async function fetchAnalyticsFilters(params = {}) {
+  try {
+    const resp = await api.get('/api/analytics/filters', { params });
+    return resp.data?.data ?? resp.data;
+  } catch (err) {
+    if (shouldFallback(err)) return mock.getAnalyticsFilters(params);
+    throw err;
+  }
+}
+
+/**
+ * GET /api/analytics/summary — the number tiles.
+ *
+ * Params (all optional): group_id, from, to, timezone, direction, device_name,
+ * vehicle_type, vehicle_number.
+ *
+ * `registered_vehicles` is a standing count of the register and deliberately
+ * ignores from/to; `traffic` is the window; `today` is the local day in
+ * progress, so the today tiles need no second call.
+ */
+export async function fetchAnalyticsSummary(params = {}) {
+  try {
+    const resp = await api.get('/api/analytics/summary', { params });
+    return resp.data?.data ?? resp.data;
+  } catch (err) {
+    if (shouldFallback(err)) return mock.getAnalyticsSummary(params);
+    throw err;
+  }
+}
+
+/**
+ * GET /api/analytics/traffic — the chart.
+ *
+ * Everything /summary takes plus granularity (hour|day|week|month, default day).
+ * The series is ordered and zero-filled, so an empty day is a point at zero
+ * rather than a gap the chart would draw straight through.
+ *
+ * A window that would produce more than limits.max_buckets points is a 400 that
+ * says to coarsen the granularity — surfaced to the caller, not swallowed.
+ */
+export async function fetchTrafficSeries(params = {}) {
+  try {
+    const resp = await api.get('/api/analytics/traffic', { params });
+    return resp.data?.data ?? resp.data;
+  } catch (err) {
+    if (shouldFallback(err)) return mock.getTrafficSeries(params);
+    throw err;
+  }
+}
+
 // ---- Vehicles ----------------------------------------------------------------
 // Params: group_id, search, status (registered|unregistered), is_active,
 // registered_by, device_name, valid_from, valid_to, expiring_in_days, page,
