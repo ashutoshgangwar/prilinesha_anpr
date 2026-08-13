@@ -13,6 +13,7 @@ import { useAuth } from '../context/AuthContext';
 import { getErrorMessage } from '../utils/format';
 import { formatCount, DIRECTION_SOURCE_LABELS } from '../utils/analytics';
 import DataTable from '../components/DataTable';
+import Skeleton, { TableSkeletonRows } from '../components/Skeletons';
 import TrafficChart from '../components/TrafficChart';
 import AnalyticsFilters, {
   EMPTY_ANALYTICS_FILTERS,
@@ -42,7 +43,17 @@ const toParams = (filters, keys = REPORT_KEYS) => {
   return params;
 };
 
+/**
+ * A number tile.
+ *
+ * `loading` covers both "still fetching" and "the request failed", and it is
+ * deliberately not possible to render this tile without a number: an absent
+ * value would print as "0", and a zero that means "we could not ask" is worse
+ * than no tile at all — it is a number an operator can act on.
+ */
 function StatCard({ title, value, icon: Icon, accent, loading, hint }) {
+  const unknown = loading || value == null;
+
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm transition-shadow hover:shadow-md">
       <div className="flex items-start justify-between gap-3">
@@ -54,8 +65,10 @@ function StatCard({ title, value, icon: Icon, accent, loading, hint }) {
         </span>
       </div>
 
-      {loading ? (
-        <div className="mt-3 h-8 w-20 animate-pulse rounded bg-gray-200" />
+      {unknown ? (
+        <div className="mt-3">
+          <Skeleton height={30} width={80} />
+        </div>
       ) : (
         <p className="mt-3 text-3xl font-bold tracking-tight text-gray-900">
           {formatCount(value)}
@@ -63,7 +76,7 @@ function StatCard({ title, value, icon: Icon, accent, loading, hint }) {
       )}
 
       {/* Reserved even when empty so the four cards stay the same height. */}
-      <p className="mt-1 h-4 text-xs text-gray-400">{loading ? '' : hint}</p>
+      <p className="mt-1 h-4 text-xs text-gray-400">{unknown ? '' : hint}</p>
     </div>
   );
 }
@@ -73,7 +86,13 @@ function Figure({ label, value, tone = 'text-gray-900' }) {
   return (
     <div>
       <p className="text-xs font-medium text-gray-500">{label}</p>
-      <p className={`text-xl font-semibold tabular-nums ${tone}`}>{formatCount(value)}</p>
+      {value == null ? (
+        <Skeleton height={20} width={44} />
+      ) : (
+        <p className={`text-xl font-semibold tabular-nums ${tone}`}>
+          {formatCount(value)}
+        </p>
+      )}
     </div>
   );
 }
@@ -116,6 +135,7 @@ export default function Dashboard() {
 
   const [recentLogs, setRecentLogs] = useState([]);
   const [recentLoading, setRecentLoading] = useState(true);
+  const [recentError, setRecentError] = useState('');
   const [lastUpdated, setLastUpdated] = useState(null);
 
   // Only the newest request may write state: changing a filter while a slower
@@ -189,6 +209,10 @@ export default function Dashboard() {
           : getErrorMessage(err, 'Failed to load the dashboard');
 
       setError(message);
+      // Both are cleared, not left standing: numbers from the last successful
+      // window would sit under an error message describing a different one, and
+      // a stale tile reads exactly like a fresh one.
+      setSummary(null);
       setTraffic(null);
     } finally {
       if (seq === requestSeq.current) setLoading(false);
@@ -205,6 +229,7 @@ export default function Dashboard() {
    */
   const loadRecent = useCallback(async () => {
     setRecentLoading(true);
+    setRecentError('');
 
     const params = toParams(filters, ['group_id', 'device_name', 'vehicle_type', 'from', 'to']);
 
@@ -216,7 +241,9 @@ export default function Dashboard() {
       });
       setRecentLogs(items);
     } catch (err) {
-      toast.error(getErrorMessage(err, 'Failed to load recent detections'));
+      const message = getErrorMessage(err, 'Failed to load recent detections');
+      setRecentError(message);
+      toast.error(message);
       setRecentLogs([]);
     } finally {
       setRecentLoading(false);
@@ -282,7 +309,13 @@ export default function Dashboard() {
 
   // Registry counts come with the filter payload too, so the tile has a number
   // before the summary lands rather than sitting on a skeleton.
-  const registry = summary?.registered_vehicles ?? options?.registered_vehicles ?? null;
+  // The filter payload carries the standing registry counts too, so the tile can
+  // paint before the heavier summary lands — but not after a failure: a number
+  // left over from the last good read, sitting under an error banner, is
+  // indistinguishable from a fresh one.
+  const registry = error
+    ? null
+    : summary?.registered_vehicles ?? options?.registered_vehicles ?? null;
   const windowTraffic = summary?.traffic ?? null;
   const today = summary?.today ?? null;
   const unattributedGates = summary?.unattributed_devices ?? [];
@@ -409,9 +442,13 @@ export default function Dashboard() {
       <div className="mb-6 flex flex-wrap items-center gap-x-10 gap-y-4 rounded-xl border border-gray-200 bg-white px-5 py-4 shadow-sm">
         <div>
           <p className="text-sm font-semibold text-gray-900">Today</p>
-          <p className="text-xs text-gray-500">
-            {today?.date ? `${today.date}` : 'No detections yet today'}
-          </p>
+          {/* Without the summary there is no local day to name — and "no
+              detections yet today" would be a claim nothing checked. */}
+          {today?.date ? (
+            <p className="text-xs text-gray-500">{today.date}</p>
+          ) : (
+            <Skeleton height={12} width={90} />
+          )}
         </div>
         <Figure label="Entries" value={today?.entries} />
         <Figure label="Exits" value={today?.exits} />
@@ -462,13 +499,14 @@ export default function Dashboard() {
           series={traffic?.series ?? []}
           granularity={traffic?.range?.granularity ?? filters.granularity}
           loading={loading}
+          failed={!!error}
           timezone={traffic?.range?.timezone}
         />
       </div>
 
       {/* Breakdowns. by_project only earns its place when rows can differ. */}
       <div className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
-        {byProject.length > 1 && (
+        {(!summary || byProject.length > 1) && (
           <section className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
             <div className="border-b border-gray-200 px-5 py-4">
               <h2 className="text-base font-semibold text-gray-900">By project</h2>
@@ -488,6 +526,7 @@ export default function Dashboard() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
+                  {!summary && <TableSkeletonRows columns={5} rows={3} />}
                   {byProject.map((row) => (
                     <tr key={row.group_id}>
                       <td className="px-5 py-2.5 text-gray-900">
@@ -520,7 +559,7 @@ export default function Dashboard() {
               What each gate saw, and on whose authority its direction was decided
             </p> */}
           </div>
-          {byDevice.length === 0 ? (
+          {summary && byDevice.length === 0 ? (
             <p className="px-5 py-8 text-center text-sm text-gray-500">
               No detections in this range
             </p>
@@ -538,6 +577,9 @@ export default function Dashboard() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
+                  {!summary && (
+                    <TableSkeletonRows columns={showProject ? 4 : 3} rows={4} />
+                  )}
                   {byDevice.map((row) => (
                     <tr key={`${row.group_id}:${row.device_name}`}>
                       <td className="px-5 py-2.5 font-medium text-gray-900">
@@ -588,6 +630,7 @@ export default function Dashboard() {
           columns={columns}
           data={visibleLogs}
           loading={recentLoading}
+          failed={!!recentError}
           rowKey={(row, i) => row.id ?? i}
           emptyMessage="No detections match these filters"
           bare

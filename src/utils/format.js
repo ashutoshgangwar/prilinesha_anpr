@@ -112,6 +112,13 @@ export const normalizePagination = (pagination, { page, limit, total }) => {
 
 /** Extracts a human-readable message from an axios error. */
 export const getErrorMessage = (error, fallback = 'Something went wrong') => {
+  // No response at all: the request never reached the API, or the API never
+  // answered. Axios calls this "Network Error", which reads like a browser
+  // problem — say what it actually means for the screen in front of the user.
+  if (error && !error.response && error.request) {
+    return 'Could not reach the API — the server may be down, or your connection is offline.';
+  }
+
   return (
     error?.response?.data?.message ||
     error?.response?.data?.error ||

@@ -1,12 +1,18 @@
 // src/config.js
 
 /**
- * Demo / offline login.
+ * Demo / offline login — OFF.
  *
- * When the backend at VITE_API_BASE_URL is not reachable (or rejects the
- * login), the app falls back to a local "demo" session so the dashboard can
- * still be explored. This is purely a frontend convenience — no real token is
- * involved, and API calls that need the backend will simply show empty states.
+ * This used to sign in locally when the backend was unreachable and serve
+ * invented rows from api/mockData.js to every screen. It is off because those
+ * rows are indistinguishable from real ones: a dead API or an expired session
+ * produced a dashboard of plausible plates, counts and passes that an operator
+ * could read, believe and act on.
+ *
+ * What happens instead: a failed GET shows loading skeletons alongside the error
+ * (see components/Skeletons.jsx), so the screen says "not available" rather than
+ * showing something that isn't true. Turning `enabled` back on restores the old
+ * behaviour — the mock module is still there — but nothing should ship with it.
  */
 /**
  * Auth / token handling knobs.
@@ -25,8 +31,8 @@ export const AUTH = {
 };
 
 export const DEMO = {
-  // Master switch for the offline fallback.
-  enabled: true,
+  // Master switch for the offline fallback. Off: no screen may show mock data.
+  enabled: false,
 
   // If true, ANY non-empty credentials are accepted in the fallback.
   // If false, only the exact credentials below work.

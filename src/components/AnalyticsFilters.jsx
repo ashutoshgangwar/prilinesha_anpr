@@ -1,5 +1,6 @@
 // src/components/AnalyticsFilters.jsx
 import { useState } from 'react';
+import Skeleton from './Skeletons';
 import {
   GRANULARITY_LABELS,
   fitGranularity,
@@ -157,8 +158,15 @@ export default function AnalyticsFilters({
 
   return (
     <div className="mb-6 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-      {/* Date range first — it is the control every reader reaches for. */}
+      {/* Date range first — it is the control every reader reaches for. The
+          chips are the API's own resolved ranges, so until it answers there is
+          nothing to offer and a placeholder is the truthful thing to draw. */}
       <div className="flex flex-wrap items-center gap-2">
+        {quickRanges.length === 0 &&
+          Array.from({ length: 5 }, (_, i) => (
+            <Skeleton key={i} height={30} width={96} borderRadius="9999px" />
+          ))}
+
         {quickRanges.map((range) => {
           const active = activeRange?.key === range.key;
           return (

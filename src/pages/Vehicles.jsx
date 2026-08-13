@@ -17,6 +17,7 @@ import {
   normalizePagination,
 } from '../utils/format';
 import DataTable from '../components/DataTable';
+import { ChipsSkeleton } from '../components/Skeletons';
 import Badge from '../components/Badge';
 import VehicleFormModal from '../components/VehicleFormModal';
 import Switch from '../components/Switch';
@@ -494,7 +495,9 @@ export default function Vehicles() {
 
       {/* Status chips. Each number comes from GET /api/vehicles/filters and the
           chip opens exactly the rows it counts, so the two can never disagree. */}
-      {counts && (
+      {!counts ? (
+        <ChipsSkeleton count={4} />
+      ) : (
         <div className="mb-4 flex flex-wrap gap-2">
           {CHIPS.map((chip) => {
             const active = chipMatches(chip, filters, expiringDays);
@@ -732,14 +735,19 @@ export default function Vehicles() {
         columns={columns}
         data={vehicles}
         loading={loading}
+        failed={!!error}
         rowKey={(row, i) => row.id ?? i}
         emptyMessage="No vehicles match these filters"
       />
 
       <div className="mt-4 flex flex-col items-center justify-between gap-3 sm:flex-row">
         <p className="text-sm text-gray-500">
-          {total === 0
-            ? 'No results'
+          {/* A failed read has no count to report — "No results" would be
+              an answer nothing came back with. */}
+          {error
+            ? '—'
+            : total === 0
+              ? 'No results'
             : `Showing ${startIndex}–${endIndex} of ${total} vehicle${total === 1 ? '' : 's'}`}
         </p>
         <div className="flex items-center gap-2">

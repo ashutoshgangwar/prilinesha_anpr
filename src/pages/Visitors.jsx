@@ -16,6 +16,7 @@ import {
   normalizePagination,
 } from '../utils/format';
 import DataTable from '../components/DataTable';
+import { ChipsSkeleton } from '../components/Skeletons';
 import Badge from '../components/Badge';
 import Switch from '../components/Switch';
 import VisitorFormModal from '../components/VisitorFormModal';
@@ -481,7 +482,9 @@ export default function Visitors() {
 
       {/* Each number comes from GET /api/visitors/filters and the chip opens
           exactly the rows it counts, so the two can never disagree. */}
-      {counts && (
+      {!counts ? (
+        <ChipsSkeleton count={5} />
+      ) : (
         <div className="mb-4 flex flex-wrap gap-2">
           {CHIPS.map((chip) => {
             const active = activeChip === chip.key;
@@ -661,14 +664,19 @@ export default function Visitors() {
         columns={columns}
         data={visitors}
         loading={loading}
+        failed={!!error}
         rowKey={(row, i) => row.id ?? i}
         emptyMessage="No visitor passes match these filters"
       />
 
       <div className="mt-4 flex flex-col items-center justify-between gap-3 sm:flex-row">
         <p className="text-sm text-gray-500">
-          {total === 0
-            ? 'No results'
+          {/* A failed read has no count to report — "No results" would be
+              an answer nothing came back with. */}
+          {error
+            ? '—'
+            : total === 0
+              ? 'No results'
             : `Showing ${startIndex}–${endIndex} of ${total} pass${total === 1 ? '' : 'es'}`}
         </p>
         <div className="flex items-center gap-2">

@@ -1,5 +1,5 @@
 // src/components/DataTable.jsx
-import Spinner from './Spinner';
+import { TableSkeletonRows } from './Skeletons';
 
 /**
  * Reusable table.
@@ -9,6 +9,11 @@ import Spinner from './Spinner';
  *  - data: Array<object>
  *  - rowKey: (row, index) => string | number   (defaults to row.id or index)
  *  - loading: boolean
+ *  - failed: the request came back an error — a dead API, or a session that is
+ *    no longer good for it. Skeleton rows are drawn rather than the empty
+ *    message, because "nothing matched" and "we could not ask" are different
+ *    answers and only one of them means the table is really empty. The page
+ *    shows the error itself alongside.
  *  - emptyMessage: string
  *  - bare: drop the card chrome (border, rounding, shadow) for callers that
  *    already render the table inside a panel of their own.
@@ -18,6 +23,7 @@ export default function DataTable({
   data,
   rowKey,
   loading = false,
+  failed = false,
   emptyMessage = 'No data found',
   bare = false,
 }) {
@@ -47,12 +53,8 @@ export default function DataTable({
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
-          {loading ? (
-            <tr>
-              <td colSpan={columns.length} className="px-4 py-10">
-                <Spinner />
-              </td>
-            </tr>
+          {loading || failed ? (
+            <TableSkeletonRows columns={columns.length} rows={failed ? 4 : 6} />
           ) : !data || data.length === 0 ? (
             <tr>
               <td

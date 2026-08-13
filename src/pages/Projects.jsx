@@ -642,14 +642,19 @@ export default function Projects() {
         columns={columns}
         data={projects}
         loading={loading}
+        failed={!!error}
         rowKey={(row, i) => row.group_id ?? i}
         emptyMessage="No projects match these filters"
       />
 
       <div className="mt-4 flex flex-col items-center justify-between gap-3 sm:flex-row">
         <p className="text-sm text-gray-500">
-          {total === 0
-            ? 'No results'
+          {/* A failed read has no count to report — "No results" would be
+              an answer nothing came back with. */}
+          {error
+            ? '—'
+            : total === 0
+              ? 'No results'
             : `Showing ${startIndex}–${endIndex} of ${total} project${total === 1 ? '' : 's'}`}
         </p>
         <div className="flex items-center gap-2">

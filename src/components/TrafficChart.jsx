@@ -9,6 +9,7 @@ import {
   GRANULARITY_LABELS,
 } from '../utils/analytics';
 import { TableIcon, ChartIcon } from './icons';
+import { ChartSkeleton } from './Skeletons';
 
 /**
  * Entries and exits over time, from GET /api/analytics/traffic.
@@ -121,6 +122,7 @@ export default function TrafficChart({
   series = [],
   granularity = 'day',
   loading = false,
+  failed = false,
   timezone,
 }) {
   const [wrapRef, width] = useElementWidth();
@@ -260,6 +262,8 @@ export default function TrafficChart({
       {asTable ? (
         count > 0 ? (
           <SeriesTable series={series} granularity={granularity} visible={visible} />
+        ) : failed || loading ? (
+          <ChartSkeleton height={200} />
         ) : (
           <p className="px-5 py-12 text-center text-sm text-gray-500">Nothing to show</p>
         )
@@ -270,7 +274,12 @@ export default function TrafficChart({
           ref={wrapRef}
           className={`relative px-2 py-3 transition-opacity ${loading ? 'opacity-40' : ''}`}
         >
-          {count === 0 ? (
+          {failed || (loading && count === 0) ? (
+            // Nothing was read, so nothing is drawn. An empty plot with an axis
+            // would state that this window held no traffic, which is a claim
+            // the API never made.
+            <ChartSkeleton height={HEIGHT - 24} />
+          ) : count === 0 ? (
             <p className="py-16 text-center text-sm text-gray-500">
               No detections in this range
             </p>
