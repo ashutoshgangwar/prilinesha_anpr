@@ -8,7 +8,6 @@ import { AuthProvider } from './context/AuthContext';
 import { ToastProvider } from './context/ToastContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import Login from './pages/Login';
-import Signup from './pages/Signup';
 import Dashboard from './pages/Dashboard';
 import Logs from './pages/Logs';
 import Vehicles from './pages/Vehicles';
@@ -33,9 +32,8 @@ const router = createBrowserRouter([
   {
     element: <RootProviders />,
     children: [
-      // Public routes
+      // Public routes — sign-up is not self-service; admins create accounts.
       { path: '/login', element: <Login /> },
-      { path: '/signup', element: <Signup /> },
 
       // Protected app shell (sidebar + page content)
       {

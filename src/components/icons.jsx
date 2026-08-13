@@ -16,6 +16,20 @@ export const EyeIcon = ({ className = 'h-5 w-5' }) => (
   </svg>
 );
 
+export const RefreshIcon = ({ className = 'h-5 w-5' }) => (
+  <svg viewBox="0 0 24 24" className={className} {...base}>
+    <path d="M20 11a8 8 0 0 0-13.7-5.3L3 9" />
+    <path d="M4 13a8 8 0 0 0 13.7 5.3L21 15" />
+    <path d="M3 4v5h5M21 20v-5h-5" />
+  </svg>
+);
+
+export const ArrowRightIcon = ({ className = 'h-5 w-5' }) => (
+  <svg viewBox="0 0 24 24" className={className} {...base}>
+    <path d="M5 12h14M13 6l6 6-6 6" />
+  </svg>
+);
+
 export const TrashIcon = ({ className = 'h-5 w-5' }) => (
   <svg viewBox="0 0 24 24" className={className} {...base}>
     <path d="M3 6h18M8 6V4h8v2m-9 0v14a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V6M10 11v6M14 11v6" />

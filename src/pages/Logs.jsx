@@ -1,6 +1,6 @@
 // src/pages/Logs.jsx
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { fetchLogs } from '../api/dataService';
+import { fetchLogs, fetchLogFilters } from '../api/dataService';
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import { getErrorMessage, normalizePagination } from '../utils/format';
@@ -16,9 +16,18 @@ const PAGE_SIZE = 25;
  * field is absent rather than sent as "" — the API treats an empty value as
  * "not supplied", and this keeps the URL honest about what is being asked.
  */
+const QUERY_KEYS = [
+  'group_id',
+  'search',
+  'vehicle_type',
+  'device_name',
+  'from',
+  'to',
+];
+
 const toParams = (filters, page) => {
   const params = { page, limit: PAGE_SIZE };
-  for (const key of ['group_id', 'search', 'vehicle_type', 'device_name', 'from', 'to']) {
+  for (const key of QUERY_KEYS) {
     const value = String(filters[key] ?? '').trim();
     if (value) params[key] = value;
   }
@@ -37,10 +46,29 @@ export default function Logs() {
   const [filters, setFilters] = useState(EMPTY_LOG_FILTERS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // What the filter bar can offer. Fetched once — it describes the caller's
+  // whole scope, so narrowing to a project is a client-side slice of it rather
+  // than another round trip. Stays null if it fails: the bar degrades to free
+  // text rather than blocking the table.
+  const [options, setOptions] = useState(null);
 
   // Only the newest request may write state. Without this, changing a filter
   // while a slower request is in flight can let stale rows land on top.
   const requestSeq = useRef(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchLogFilters()
+      .then((data) => {
+        if (!cancelled) setOptions(data);
+      })
+      .catch(() => {
+        /* Filter options are an enhancement; the table stands without them. */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const loadLogs = useCallback(async () => {
     const seq = ++requestSeq.current;
@@ -82,9 +110,15 @@ export default function Logs() {
   };
 
   // The project column only earns its place when rows can differ: more than one
-  // project in view and no single one selected.
-  const showProject =
-    !filters.group_id && (isSuperAdmin || (projects?.length ?? 0) > 1);
+  // project in view and no single one selected. The filter payload knows the
+  // real scope; the token's own list is the fallback until it arrives.
+  const scopeSize = options?.projects?.length ?? projects?.length ?? 0;
+  const showProject = !filters.group_id && (isSuperAdmin || scopeSize > 1);
+
+  // "Nothing recorded yet" and "nothing matched" look identical in an empty
+  // table but mean different things, and detected_between is what tells them
+  // apart: null on both ends only when the caller has no detections at all.
+  const noDataAtAll = options?.detected_between?.from == null;
 
   const columns = useMemo(() => buildLogColumns({ showProject }), [showProject]);
 
@@ -103,7 +137,8 @@ export default function Logs() {
 
       <Filters
         initial={filters}
-        projects={projects}
+        options={options}
+        fallbackProjects={projects}
         onSearch={handleSearch}
         onClear={handleClear}
       />
@@ -119,7 +154,11 @@ export default function Logs() {
         data={logs}
         loading={loading}
         rowKey={(row, i) => row.id ?? i}
-        emptyMessage="No detections match these filters"
+        emptyMessage={
+          noDataAtAll
+            ? 'No detections recorded yet — nothing has come through your gates.'
+            : 'No detections match these filters'
+        }
       />
 
       {/* Pagination — has_next / has_previous come from the server. */}

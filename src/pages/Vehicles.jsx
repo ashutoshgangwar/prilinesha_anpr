@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   fetchVehicles,
+  fetchVehicleFilters,
   createVehicle,
   updateVehicle,
   setVehicleStatus,
@@ -28,6 +29,44 @@ const EMPTY_FILTERS = {
   search: '',
   status: '',
   is_active: '',
+  device_name: '',
+  registered_by: '',
+  valid_from: '',
+  valid_to: '',
+  expiring_in_days: '',
+};
+
+/**
+ * The status chips, and the exact query each one opens.
+ *
+ * These are not decoration: every chip's filter set is chosen to match the
+ * count the API reports for it, so the number on the chip is the number of rows
+ * you get. `expired` and `deactivated` are the two halves of `unregistered` —
+ * kept apart because one is fixed by renewing and the other by switching back
+ * on. `is_active=true` is what isolates the merely-lapsed from the suspended.
+ */
+const CHIPS = [
+  { key: 'total', label: 'All', filters: {} },
+  { key: 'registered', label: 'Registered', filters: { status: 'registered' } },
+  {
+    key: 'expired',
+    label: 'Expired',
+    filters: { status: 'unregistered', is_active: 'true' },
+  },
+  { key: 'deactivated', label: 'Deactivated', filters: { is_active: 'false' } },
+];
+
+/** Which chip, if any, the current filters represent. */
+const chipMatches = (chip, filters, expiringDays) => {
+  if (chip.key === 'expiring') {
+    return String(filters.expiring_in_days) === String(expiringDays);
+  }
+  if (filters.expiring_in_days) return false;
+  const want = chip.filters;
+  return (
+    (want.status ?? '') === filters.status &&
+    (want.is_active ?? '') === filters.is_active
+  );
 };
 
 /**
@@ -91,11 +130,53 @@ export default function Vehicles() {
   const [error, setError] = useState('');
   const [modal, setModal] = useState({ open: false, vehicle: null });
   const [busyId, setBusyId] = useState(null);
+  // Projects, gates, operators and the count behind each chip. Reloaded after
+  // every write, since registering or deactivating a vehicle moves the counts.
+  const [options, setOptions] = useState(null);
+
+  // The API owns the renewal horizon; 30 is only the stand-in until it answers.
+  const expiringDays = options?.expiring_soon?.within_days ?? 30;
 
   const requestSeq = useRef(0);
 
+  const loadOptions = useCallback(() => {
+    fetchVehicleFilters()
+      .then(setOptions)
+      .catch(() => {
+        /* An enhancement — the table and its filters work without it. */
+      });
+  }, []);
+
+  useEffect(() => {
+    loadOptions();
+  }, [loadOptions]);
+
   const updateDraft = (key, value) =>
-    setDraft((prev) => ({ ...prev, [key]: value }));
+    setDraft((prev) => {
+      const next = { ...prev, [key]: value };
+      // Switching project can strand a gate belonging to the old one, which
+      // would then quietly match nothing.
+      if (key === 'group_id') next.device_name = '';
+      return next;
+    });
+
+  /**
+   * Chips bypass the draft: they are a whole query, applied on click, so they
+   * replace the pending form rather than merging into it — otherwise a
+   * half-typed search would silently ride along with the count you clicked.
+   */
+  const applyChip = (chip) => {
+    const next = {
+      ...EMPTY_FILTERS,
+      group_id: filters.group_id,
+      ...(chip.key === 'expiring'
+        ? { expiring_in_days: String(expiringDays) }
+        : chip.filters),
+    };
+    setPage(1);
+    setDraft(next);
+    setFilters(next);
+  };
 
   const loadVehicles = useCallback(async () => {
     const seq = ++requestSeq.current;
@@ -109,6 +190,12 @@ export default function Vehicles() {
       if (filters.search.trim()) params.search = filters.search.trim();
       if (filters.status) params.status = filters.status;
       if (filters.is_active !== '') params.is_active = filters.is_active === 'true';
+      if (filters.device_name) params.device_name = filters.device_name;
+      if (filters.registered_by) params.registered_by = filters.registered_by;
+      if (filters.valid_from) params.valid_from = filters.valid_from;
+      if (filters.valid_to) params.valid_to = filters.valid_to;
+      if (filters.expiring_in_days !== '')
+        params.expiring_in_days = Number(filters.expiring_in_days);
 
       const { items, total, pagination } = await fetchVehicles(params);
       if (seq !== requestSeq.current) return;
@@ -144,6 +231,7 @@ export default function Vehicles() {
         : `${payload.vehicle_number} registration renewed`
     );
     setModal({ open: false, vehicle: null });
+    loadOptions(); // a new registration moves the counts
     if (page === 1) loadVehicles();
     else setPage(1);
   };
@@ -152,6 +240,8 @@ export default function Vehicles() {
     const updated = await updateVehicle(modal.vehicle.id, payload);
     toast.success(`${modal.vehicle.vehicle_number} updated`);
     setModal({ open: false, vehicle: null });
+    // An edit can extend valid_till, which moves a row between chips.
+    loadOptions();
     if (updated?.id) replaceRow(updated);
     else loadVehicles();
   };
@@ -161,6 +251,7 @@ export default function Vehicles() {
     setBusyId(row.id);
     try {
       const updated = await setVehicleStatus(row.id, next);
+      loadOptions(); // moves the row between the registered/deactivated chips
       if (updated?.id) replaceRow(updated);
       else loadVehicles();
       toast.success(
@@ -187,6 +278,7 @@ export default function Vehicles() {
     try {
       await deleteVehicle(row.id);
       toast.success(`${row.vehicle_number} registration deleted`);
+      loadOptions();
       // Refetch rather than splice: the page is now one row short and the row
       // that fills it comes from the server.
       loadVehicles();
@@ -201,6 +293,17 @@ export default function Vehicles() {
   // to a single default — so they must always name one, even with one project.
   const requireProject = isSuperAdmin || (projects?.length ?? 0) > 1;
   const canWrite = hasPermission('vehicle:write');
+
+  const counts = options?.counts ?? null;
+  const operators = options?.registered_by ?? [];
+  // Prefer the filter payload's project list: it is scoped exactly like the
+  // table, so it can never offer a project the request would 403 on.
+  const filterProjects = options?.projects ?? projects ?? [];
+  // Gates belong to a project, so naming one narrows the list to its own.
+  const selectedProject = filterProjects.find((p) => p.group_id === draft.group_id);
+  const gates = selectedProject
+    ? selectedProject.device_names ?? []
+    : options?.device_names ?? [];
 
   const columns = useMemo(() => {
     const cols = [
@@ -371,6 +474,63 @@ export default function Vehicles() {
         )}
       </div>
 
+      {/* Status chips. Each number comes from GET /api/vehicles/filters and the
+          chip opens exactly the rows it counts, so the two can never disagree. */}
+      {counts && (
+        <div className="mb-4 flex flex-wrap gap-2">
+          {CHIPS.map((chip) => {
+            const active = chipMatches(chip, filters, expiringDays);
+            return (
+              <button
+                key={chip.key}
+                type="button"
+                onClick={() => applyChip(chip)}
+                className={`inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors ${
+                  active
+                    ? 'border-brand-500 bg-brand-500 text-white'
+                    : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                {chip.label}
+                <span
+                  className={`rounded-full px-1.5 py-0.5 text-xs tabular-nums ${
+                    active ? 'bg-white/20' : 'bg-gray-100 text-gray-600'
+                  }`}
+                >
+                  {counts[chip.key] ?? 0}
+                </span>
+              </button>
+            );
+          })}
+
+          {/* The renewals queue — switched on and lapsing soon. Not part of the
+              partition above: these rows are still registered today. */}
+          {options?.expiring_soon && (
+            <button
+              type="button"
+              onClick={() => applyChip({ key: 'expiring' })}
+              className={`inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors ${
+                chipMatches({ key: 'expiring' }, filters, expiringDays)
+                  ? 'border-amber-500 bg-amber-500 text-white'
+                  : 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100'
+              }`}
+              title={`Registrations lapsing within ${expiringDays} days`}
+            >
+              Expiring in {expiringDays}d
+              <span
+                className={`rounded-full px-1.5 py-0.5 text-xs tabular-nums ${
+                  chipMatches({ key: 'expiring' }, filters, expiringDays)
+                    ? 'bg-white/20'
+                    : 'bg-amber-200/70'
+                }`}
+              >
+                {options.expiring_soon.count ?? 0}
+              </span>
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Filters. Applied on submit rather than per keystroke, so typing a plate
           is one request instead of one per character. */}
       <form
@@ -390,7 +550,7 @@ export default function Vehicles() {
               className={inputClass}
             >
               <option value="">All my projects</option>
-              {projects.map((p) => (
+              {filterProjects.map((p) => (
                 <option key={p.group_id} value={p.group_id}>
                   {p.project_name || p.group_id}
                 </option>
@@ -437,6 +597,74 @@ export default function Vehicles() {
             <option value="true">Active</option>
             <option value="false">Deactivated</option>
           </select>
+        </label>
+
+        {/* "Who may come through this gate?" — the question a guard on one
+            entrance asks. Registrations with no gates listed are the wildcard
+            meaning every gate, and the API counts them here too. */}
+        {gates.length > 0 && (
+          <label className="flex flex-col">
+            <span className="mb-1 text-xs font-medium text-gray-500">Gate</span>
+            <select
+              value={draft.device_name}
+              onChange={(e) => updateDraft('device_name', e.target.value)}
+              className={inputClass}
+            >
+              <option value="">Any gate</option>
+              {gates.map((gate) => (
+                <option key={gate} value={gate}>
+                  {gate}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        {/* Only the operators who have actually registered something in scope,
+            so this is the handful of names in the table, not every account. */}
+        {operators.length > 0 && (
+          <label className="flex flex-col">
+            <span className="mb-1 text-xs font-medium text-gray-500">Added by</span>
+            <select
+              value={draft.registered_by}
+              onChange={(e) => updateDraft('registered_by', e.target.value)}
+              className={inputClass}
+            >
+              <option value="">Anyone</option>
+              {operators.map((op) => (
+                <option key={op.id} value={op.id}>
+                  {op.name || op.email || op.id}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        {/* A window on the expiry date itself — "which passes run out this
+            month?" — independent of status, which only asks whether that date
+            has already passed. */}
+        <label className="flex flex-col">
+          <span className="mb-1 text-xs font-medium text-gray-500">
+            Expires from
+          </span>
+          <input
+            type="date"
+            value={draft.valid_from}
+            onChange={(e) => updateDraft('valid_from', e.target.value)}
+            max={draft.valid_to || undefined}
+            className={inputClass}
+          />
+        </label>
+
+        <label className="flex flex-col">
+          <span className="mb-1 text-xs font-medium text-gray-500">Expires to</span>
+          <input
+            type="date"
+            value={draft.valid_to}
+            onChange={(e) => updateDraft('valid_to', e.target.value)}
+            min={draft.valid_from || undefined}
+            className={inputClass}
+          />
         </label>
 
         <button

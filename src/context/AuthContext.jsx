@@ -231,23 +231,6 @@ export const AuthProvider = ({ children }) => {
     [applySession, tryDemoLogin]
   );
 
-  const signup = useCallback(
-    async (name, email, password) => {
-      try {
-        const resp = await api.post('/api/auth/signup', { name, email, password });
-        const payload = readAuthPayload(resp.data);
-        applySession(payload);
-        return payload;
-      } catch (err) {
-        if (isBackendUnreachable(err) && tryDemoLogin(email, password, { name })) {
-          return { demo: true };
-        }
-        throw err;
-      }
-    },
-    [applySession, tryDemoLogin]
-  );
-
   /**
    * POST /api/auth/logout, then clear locally.
    *
@@ -323,7 +306,6 @@ export const AuthProvider = ({ children }) => {
       hasAnyPermission,
       canAccessGroup,
       login,
-      signup,
       logout,
       refreshSession,
     }),
@@ -337,7 +319,6 @@ export const AuthProvider = ({ children }) => {
       hasAnyPermission,
       canAccessGroup,
       login,
-      signup,
       logout,
       refreshSession,
     ]

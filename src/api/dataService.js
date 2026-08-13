@@ -43,14 +43,61 @@ export async function fetchLogs(params = {}) {
 // saw, and the backend offers no way to read one event or to delete one — so
 // the dashboard must not pretend otherwise.
 
+/**
+ * GET /api/logs/filters — what the filter bar above the log table can offer.
+ *
+ * Fetched once when the screen opens instead of hard-coding gate names or
+ * paging the log to discover them. Scoped exactly like the table it drives, so
+ * a dropdown can never offer a project the caller would then get a 403 for.
+ *
+ * Returns { projects[{group_id, project_name, is_active, device_names}],
+ * device_names, vehicle_types, detected_between{from,to}, paging }.
+ * detected_between is null on both ends when there are no detections at all —
+ * which is a different thing from a filter that matched nothing.
+ */
+export async function fetchLogFilters(params = {}) {
+  try {
+    const resp = await api.get('/api/logs/filters', { params });
+    return resp.data?.data ?? resp.data;
+  } catch (err) {
+    if (shouldFallback(err)) return mock.getLogFilters(params);
+    throw err;
+  }
+}
+
 // ---- Vehicles ----------------------------------------------------------------
-// Params: group_id, search, status (registered|unregistered), page, limit.
+// Params: group_id, search, status (registered|unregistered), is_active,
+// registered_by, device_name, valid_from, valid_to, expiring_in_days, page,
+// limit.
 export async function fetchVehicles(params = {}) {
   try {
     const resp = await api.get('/api/vehicles', { params });
     return normalizeListResponse(resp.data);
   } catch (err) {
     if (shouldFallback(err)) return mock.getVehicles(params);
+    throw err;
+  }
+}
+
+/**
+ * GET /api/vehicles/filters — what the registry's filter bar can offer.
+ *
+ * Everything fetchLogFilters returns, plus the operators who have actually
+ * registered something (for `registered_by`) and the count behind each status
+ * chip. The counts partition the registry exactly — registered + expired +
+ * deactivated = total, `unregistered` being the last two — so a chip's number
+ * always matches the table it opens.
+ *
+ * Returns { projects, device_names, statuses, registered_by[{id,name,email}],
+ * counts{total,registered,unregistered,expired,deactivated},
+ * expiring_soon{within_days,count}, paging }.
+ */
+export async function fetchVehicleFilters(params = {}) {
+  try {
+    const resp = await api.get('/api/vehicles/filters', { params });
+    return resp.data?.data ?? resp.data;
+  } catch (err) {
+    if (shouldFallback(err)) return mock.getVehicleFilters(params);
     throw err;
   }
 }

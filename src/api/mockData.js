@@ -499,6 +499,7 @@ export function getLogs(params = {}) {
     limit = 25,
     group_id: groupId,
     search,
+    vehicle_number: vehicleNumber,
     vehicle_type: vehicleType,
     device_name: deviceName,
     from,
@@ -509,6 +510,14 @@ export function getLogs(params = {}) {
 
   if (groupId) {
     items = items.filter((l) => l.group_id === groupId);
+  }
+  if (vehicleNumber) {
+    // One exact plate, every crossing — equality on the uppercased plate, not
+    // the partial match `search` runs.
+    const plate = String(vehicleNumber).toUpperCase();
+    items = items.filter(
+      (l) => String(l.vehicle_number || '').toUpperCase() === plate
+    );
   }
   if (search) {
     // Partial and case-insensitive across plate, owner and model.
@@ -571,6 +580,10 @@ export function getVehicles(params = {}) {
     status,
     is_active: isActive,
     registered_by: registeredBy,
+    device_name: deviceName,
+    valid_from: validFrom,
+    valid_to: validTo,
+    expiring_in_days: expiringInDays,
   } = params;
 
   let items = [...vehicles]
@@ -597,6 +610,38 @@ export function getVehicles(params = {}) {
   if (registeredBy) {
     items = items.filter((v) => v.registered_by?.id === registeredBy);
   }
+  // An empty device_names is the wildcard meaning every gate in the project, so
+  // those registrations are valid at this gate too — they simply were not
+  // written down gate by gate.
+  if (deviceName) {
+    const gate = String(deviceName).toLowerCase();
+    items = items.filter(
+      (v) =>
+        !v.device_names?.length ||
+        v.device_names.some((d) => String(d).toLowerCase() === gate)
+    );
+  }
+  // A window on the expiry date itself, independent of `status` — which only
+  // asks whether that date has already passed.
+  if (validFrom) {
+    const f = new Date(validFrom);
+    items = items.filter((v) => new Date(v.valid_till) >= f);
+  }
+  if (validTo) {
+    const t = new Date(validTo);
+    if (String(validTo).length <= 10) t.setHours(23, 59, 59, 999);
+    items = items.filter((v) => new Date(v.valid_till) <= t);
+  }
+  // The renewals queue: switched on and lapsing within N days. Excludes the
+  // already-expired (the window starts now) and the deactivated.
+  if (expiringInDays !== undefined && expiringInDays !== '' && expiringInDays !== null) {
+    const now = Date.now();
+    const until = now + Number(expiringInDays) * 86400000;
+    items = items.filter((v) => {
+      const till = new Date(v.valid_till).getTime();
+      return v.is_active && till >= now && till <= until;
+    });
+  }
 
   const total = items.length;
   const perPage = Number(limit);
@@ -615,6 +660,102 @@ export function getVehicles(params = {}) {
       has_next: currentPage < totalPages,
       has_previous: currentPage > 1,
     },
+  };
+}
+
+// ---- Filter options ----------------------------------------------------------
+// Offline stand-ins for GET /api/logs/filters and GET /api/vehicles/filters.
+// Gates come from the project registry rather than a distinct over the events,
+// so a camera that has not seen anything yet is still offered — same as the API.
+
+const EXPIRING_SOON_DAYS = 30;
+
+/** The scoped project list, and the de-duplicated flat gate list across it. */
+function scopedGates(groupId) {
+  const scoped = groupId ? projects.filter((p) => p.group_id === groupId) : projects;
+
+  const records = scoped.map((p) => ({
+    group_id: p.group_id,
+    project_name: p.project_name,
+    is_active: p.is_active !== false,
+    device_names: (p.devices ?? [])
+      .filter((d) => d.is_active !== false)
+      .map((d) => d.device_name)
+      .sort((a, b) => a.localeCompare(b)),
+  }));
+
+  // Two projects can both have a gate called "entry1" and the filter matches by
+  // name across the whole scope, so the flat list is de-duplicated.
+  const seen = new Map();
+  records.forEach((p) =>
+    p.device_names.forEach((n) => {
+      if (!seen.has(n.toLowerCase())) seen.set(n.toLowerCase(), n);
+    })
+  );
+
+  return {
+    projects: records,
+    device_names: [...seen.values()].sort((a, b) => a.localeCompare(b)),
+  };
+}
+
+export function getLogFilters(params = {}) {
+  const { group_id: groupId } = params;
+  const scoped = groupId ? logs.filter((l) => l.group_id === groupId) : logs;
+  const times = scoped.map((l) => new Date(l.detected_at).getTime());
+
+  return {
+    ...scopedGates(groupId),
+    vehicle_types: ['registered', 'unregistered'],
+    // Null on both ends when there are no detections at all — a different thing
+    // from a filter that matched nothing.
+    detected_between: {
+      from: times.length ? new Date(Math.min(...times)).toISOString() : null,
+      to: times.length ? new Date(Math.max(...times)).toISOString() : null,
+    },
+    paging: { default_limit: 25, max_limit: 200 },
+  };
+}
+
+export function getVehicleFilters(params = {}) {
+  const { group_id: groupId } = params;
+  const scoped = (groupId ? vehicles.filter((v) => v.group_id === groupId) : vehicles).map(
+    decorate
+  );
+
+  const now = Date.now();
+  const soon = now + EXPIRING_SOON_DAYS * 86400000;
+  const till = (v) => new Date(v.valid_till).getTime();
+
+  // Kept apart because they are fixed differently: one needs renewing, the
+  // other switching back on. registered + expired + deactivated = total.
+  const registered = scoped.filter((v) => v.is_active && till(v) >= now);
+  const expired = scoped.filter((v) => v.is_active && till(v) < now);
+  const deactivated = scoped.filter((v) => !v.is_active);
+
+  const actors = new Map();
+  scoped.forEach((v) => {
+    if (v.registered_by?.id) actors.set(v.registered_by.id, v.registered_by);
+  });
+
+  return {
+    ...scopedGates(groupId),
+    statuses: ['registered', 'unregistered'],
+    registered_by: [...actors.values()]
+      .map((a) => ({ id: a.id, name: a.name ?? null, email: a.email ?? null }))
+      .sort((a, b) => String(a.name).localeCompare(String(b.name))),
+    counts: {
+      total: scoped.length,
+      registered: registered.length,
+      unregistered: expired.length + deactivated.length,
+      expired: expired.length,
+      deactivated: deactivated.length,
+    },
+    expiring_soon: {
+      within_days: EXPIRING_SOON_DAYS,
+      count: scoped.filter((v) => v.is_active && till(v) >= now && till(v) <= soon).length,
+    },
+    paging: { default_limit: 25, max_limit: 100 },
   };
 }
 
