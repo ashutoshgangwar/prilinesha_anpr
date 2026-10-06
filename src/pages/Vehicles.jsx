@@ -15,10 +15,11 @@ import {
   formatDate,
   formatDateTime,
   normalizePagination,
+  getIntoziSyncMeta,
 } from '../utils/format';
 import DataTable from '../components/DataTable';
 import { ChipsSkeleton } from '../components/Skeletons';
-import Badge from '../components/Badge';
+import Badge, { IntoziSyncBadge } from '../components/Badge';
 import VehicleFormModal from '../components/VehicleFormModal';
 import Switch from '../components/Switch';
 import { TrashIcon } from '../components/icons';
@@ -112,6 +113,40 @@ function ValidityCell({ row }) {
         </span>
       )}
     </span>
+  );
+}
+
+// How many gate names to show before collapsing the rest behind a "+N more".
+const GATES_PREVIEW = 1;
+
+/**
+ * The gates a registration is pinned to. An empty list means every gate in the
+ * project, which is the common case. Only the first gate shows; the rest drop
+ * down below it when the operator asks to see them.
+ */
+function GatesCell({ row }) {
+  const [expanded, setExpanded] = useState(false);
+  const gates = row.device_names ?? [];
+
+  if (!gates.length) return <span className="text-gray-400">All gates</span>;
+
+  const hidden = gates.length - GATES_PREVIEW;
+
+  return (
+    <div className="font-mono text-xs" title={gates.join(', ')}>
+      <div>{gates[0]}</div>
+      {expanded &&
+        gates.slice(GATES_PREVIEW).map((gate) => <div key={gate}>{gate}</div>)}
+      {hidden > 0 && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="mt-0.5 font-sans font-medium text-brand-600 hover:text-brand-700"
+        >
+          {expanded ? 'Show less' : `+${hidden} more`}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -235,6 +270,8 @@ export default function Vehicles() {
     );
     setModal({ open: false, vehicle: null });
     loadOptions(); // a new registration moves the counts
+    // The refreshed list carries each row's intozi_sync, so the new/renewed
+    // row's badge reflects what the backend actually did with the sync.
     if (page === 1) loadVehicles();
     else setPage(1);
   };
@@ -245,6 +282,7 @@ export default function Vehicles() {
     setModal({ open: false, vehicle: null });
     // An edit can extend valid_till, which moves a row between chips.
     loadOptions();
+    // updated carries the fresh intozi_sync; the badge reads it off the row.
     if (updated?.id) replaceRow(updated);
     else loadVehicles();
   };
@@ -255,6 +293,8 @@ export default function Vehicles() {
     try {
       const updated = await setVehicleStatus(row.id, next);
       loadOptions(); // moves the row between the registered/deactivated chips
+      // Activating/suspending can push to or remove from Intozi — the response's
+      // intozi_sync is the truth, so swap the row in rather than assuming.
       if (updated?.id) replaceRow(updated);
       else loadVehicles();
       toast.success(
@@ -299,6 +339,20 @@ export default function Vehicles() {
 
   const counts = options?.counts ?? null;
   const operators = options?.registered_by ?? [];
+
+  // A page-local read of how many rows have not reached Intozi cleanly — purely
+  // informational, from the statuses already loaded, so it needs no extra call
+  // and only ever describes the page in view.
+  const syncAttention = useMemo(() => {
+    let pending = 0;
+    let failed = 0;
+    for (const v of vehicles) {
+      const status = getIntoziSyncMeta(v).status;
+      if (status === 'pending') pending += 1;
+      else if (status === 'failed') failed += 1;
+    }
+    return { pending, failed };
+  }, [vehicles]);
   // Prefer the filter payload's project list: it is scoped exactly like the
   // table, so it can never offer a project the request would 403 on.
   const filterProjects = options?.projects ?? projects ?? [];
@@ -322,9 +376,6 @@ export default function Vehicles() {
       {
         key: 'name',
         header: 'Owner',
-        // The unit is how a guard actually identifies someone, and the
-        // occupant kind is the word this site uses for them — a society's
-        // resident, a parking project's tenant.
         render: (row) => (
           <div>
             <span className="text-gray-900">{row.name || '—'}</span>
@@ -339,8 +390,6 @@ export default function Vehicles() {
       {
         key: 'vehicle_model',
         header: 'Model',
-        // Free text and optional — nothing branches on it, it is there so an
-        // operator can recognise the vehicle.
         render: (row) =>
           row.vehicle_model || <span className="text-gray-400">—</span>,
       },
@@ -351,39 +400,52 @@ export default function Vehicles() {
           <span className="whitespace-nowrap">{row.phone_number || '—'}</span>
         ),
       },
+      {
+        key: 'intozi_sync',
+        header: 'Sync status',
+        render: (row) => <IntoziSyncBadge row={row} />,
+      },
       { key: 'status', header: 'Status', render: (row) => <StatusCell row={row} /> },
       {
         key: 'is_active',
         header: 'Active',
-        // The switch sits next to Status rather than among the actions, because
-        // it is the state itself, not something done to the row. Status shows
-        // the outcome (which also depends on the expiry date); this shows the
-        // one half a person controls.
-        render: (row) =>
-          canWrite ? (
+        render: (row) => {
+          // An expired pass cannot be activated: switching it on would leave it
+          // reading unregistered anyway, until the expiry is extended. So an
+          // expired, switched-off vehicle has its toggle locked — the fix is to
+          // Edit and extend the expiry, not to flip this switch. One that is
+          // still switched on can always be switched off.
+          const expired =
+            typeof row.days_remaining === 'number' && row.days_remaining < 0;
+          const lockedExpired = expired && !row.is_active;
+
+          if (!canWrite) {
+            return (
+              <Switch
+                checked={row.is_active}
+                disabled
+                labels={null}
+                title={row.is_active ? 'Active' : 'Inactive'}
+              />
+            );
+          }
+
+          return (
             <Switch
               checked={row.is_active}
-              disabled={busyId === row.id}
+              disabled={busyId === row.id || lockedExpired}
               onChange={() => handleToggleStatus(row)}
               labels={null}
               title={
-                row.is_active
-                  ? `Switch off ${row.vehicle_number} — it reads as unregistered at every gate from the next detection`
-                  : `Switch on ${row.vehicle_number}${
-                      row.days_remaining < 0
-                        ? ' — note its pass has expired, so it stays unregistered until the expiry is extended'
-                        : ' — registered again from the next detection'
-                    }`
+                lockedExpired
+                  ? `${row.vehicle_number} has expired — extend its expiry from Edit before it can be activated`
+                  : row.is_active
+                    ? `Switch off ${row.vehicle_number} — it reads as unregistered at every gate from the next detection`
+                    : `Switch on ${row.vehicle_number} — registered again from the next detection`
               }
             />
-          ) : (
-            <Switch
-              checked={row.is_active}
-              disabled
-              labels={null}
-              title={row.is_active ? 'Active' : 'Inactive'}
-            />
-          ),
+          );
+        },
       },
       {
         key: 'valid_till',
@@ -393,13 +455,7 @@ export default function Vehicles() {
       {
         key: 'device_names',
         header: 'Gates',
-        // Empty means every gate in the project, which is the normal case.
-        render: (row) =>
-          row.device_names?.length ? (
-            <span className="font-mono text-xs">{row.device_names.join(', ')}</span>
-          ) : (
-            <span className="text-gray-400">All gates</span>
-          ),
+        render: (row) => <GatesCell row={row} />,
       },
       {
         key: 'registered_by',
@@ -749,6 +805,21 @@ export default function Vehicles() {
             : total === 0
               ? 'No results'
             : `Showing ${startIndex}–${endIndex} of ${total} vehicle${total === 1 ? '' : 's'}`}
+          {/* Sync attention, from the loaded page only. */}
+          {!error &&
+            total > 0 &&
+            (syncAttention.failed > 0 || syncAttention.pending > 0) && (
+              <span className="text-gray-400">
+                {' · '}
+                {[
+                  syncAttention.failed > 0 && `${syncAttention.failed} failed`,
+                  syncAttention.pending > 0 && `${syncAttention.pending} pending`,
+                ]
+                  .filter(Boolean)
+                  .join(', ')}{' '}
+                sync on this page
+              </span>
+            )}
         </p>
         <div className="flex items-center gap-2">
           <button

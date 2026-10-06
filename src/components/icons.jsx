@@ -134,3 +134,22 @@ export const PlateIcon = ({ className = 'h-5 w-5' }) => (
     <path d="M6 10v4M10 10v4M14 10v4M18 10v4" />
   </svg>
 );
+
+export const CheckIcon = ({ className = 'h-5 w-5' }) => (
+  <svg viewBox="0 0 24 24" className={className} {...base}>
+    <path d="M5 12.5 9.2 16.7 19 6.9" />
+  </svg>
+);
+
+export const ClockIcon = ({ className = 'h-5 w-5' }) => (
+  <svg viewBox="0 0 24 24" className={className} {...base}>
+    <circle cx="12" cy="12" r="8" />
+    <path d="M12 7v5l3 2" />
+  </svg>
+);
+
+export const MinusIcon = ({ className = 'h-5 w-5' }) => (
+  <svg viewBox="0 0 24 24" className={className} {...base}>
+    <path d="M5 12h14" />
+  </svg>
+);

@@ -1,6 +1,7 @@
 // src/components/VehicleFormModal.jsx
 import { useState, useEffect, useMemo, useRef } from 'react';
 import Modal from './Modal';
+import { IntoziSyncBadge } from './Badge';
 import { fetchProjectDevices } from '../api/dataService';
 import { getErrorMessage } from '../utils/format';
 
@@ -534,12 +535,18 @@ export default function VehicleFormModal({
             them, and changing either would mean a different vehicle. */}
         {isEdit ? (
           <div className="rounded-md bg-gray-50 px-3 py-2 text-sm">
-            <span className="font-mono font-medium text-gray-900">
-              {vehicle.vehicle_number}
-            </span>
-            <span className="ml-2 font-mono text-xs text-gray-500">
-              {vehicle.group_id}
-            </span>
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <span className="font-mono font-medium text-gray-900">
+                  {vehicle.vehicle_number}
+                </span>
+                <span className="ml-2 font-mono text-xs text-gray-500">
+                  {vehicle.group_id}
+                </span>
+              </div>
+              {/* Read-only: where this registration stands on Intozi's watchlist. */}
+              <IntoziSyncBadge row={vehicle} />
+            </div>
             <p className="mt-0.5 text-xs text-gray-400">
               Vehicle number and project cannot be changed.
             </p>

@@ -14,10 +14,11 @@ import {
   getErrorMessage,
   formatDateTime,
   normalizePagination,
+  getIntoziSyncMeta,
 } from '../utils/format';
 import DataTable from '../components/DataTable';
 import { ChipsSkeleton } from '../components/Skeletons';
-import Badge from '../components/Badge';
+import Badge, { IntoziSyncBadge } from '../components/Badge';
 import Switch from '../components/Switch';
 import VisitorFormModal from '../components/VisitorFormModal';
 import { TrashIcon } from '../components/icons';
@@ -98,7 +99,7 @@ function WindowCell({ row }) {
   // exactly what is left of it.
   const note = revoked
     ? past
-      ? 'revoked · window already closed'
+      ? '' // a revoked-and-closed pass says nothing extra — the dates already tell it
       : `revoked · window ends in ${humanMinutes(remaining)}`
     : row.inactive_reason === 'not_started'
       ? `starts later · ${humanMinutes(row.window_minutes)} pass`
@@ -115,7 +116,41 @@ function WindowCell({ row }) {
         <span className="mr-1 text-gray-300">→</span>
         {formatDateTime(row.valid_till)}
       </p>
-      <p className="mt-0.5 text-gray-400">{note}</p>
+      {note && <p className="mt-0.5 text-gray-400">{note}</p>}
+    </div>
+  );
+}
+
+// How many gate names to show before collapsing the rest behind a "+N more".
+const GATES_PREVIEW = 1;
+
+/**
+ * The gates a pass is pinned to. An empty list means every gate in the project,
+ * which is the common case. Only the first gate shows; the rest drop down below
+ * it when the operator asks to see them — the same pattern as the registry.
+ */
+function GatesCell({ row }) {
+  const [expanded, setExpanded] = useState(false);
+  const gates = row.device_names ?? [];
+
+  if (!gates.length) return <span className="text-gray-400">All gates</span>;
+
+  const hidden = gates.length - GATES_PREVIEW;
+
+  return (
+    <div className="font-mono text-xs" title={gates.join(', ')}>
+      <div>{gates[0]}</div>
+      {expanded &&
+        gates.slice(GATES_PREVIEW).map((gate) => <div key={gate}>{gate}</div>)}
+      {hidden > 0 && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="mt-0.5 font-sans font-medium text-brand-600 hover:text-brand-700"
+        >
+          {expanded ? 'Show less' : `+${hidden} more`}
+        </button>
+      )}
     </div>
   );
 }
@@ -239,6 +274,8 @@ export default function Visitors() {
     toast.success(`Pass issued for ${created?.vehicle_number ?? payload.vehicle_number}`);
     setModal({ open: false, visitor: null });
     loadOptions(); // a new pass moves the counts
+    // The refreshed list carries each row's intozi_sync, so the new pass's
+    // badge reflects what the backend actually did with the sync.
     if (page === 1) loadVisitors();
     else setPage(1);
   };
@@ -249,6 +286,7 @@ export default function Visitors() {
     setModal({ open: false, visitor: null });
     // An edit can extend the window, which moves a row between chips.
     loadOptions();
+    // updated carries the fresh intozi_sync; the badge reads it off the row.
     if (updated?.id) replaceRow(updated);
     else loadVisitors();
   };
@@ -259,6 +297,8 @@ export default function Visitors() {
     try {
       const updated = await setVisitorStatus(row.id, next);
       loadOptions();
+      // Revoking/reinstating can push to or remove from Intozi — the response's
+      // intozi_sync is the truth, so swap the row in rather than assuming.
       if (updated?.id) replaceRow(updated);
       else loadVisitors();
       toast.success(
@@ -303,6 +343,20 @@ export default function Visitors() {
   // vehicle one — the token's own scope is what stands in for it here.
   const filterProjects = projects ?? [];
 
+  // A page-local read of how many passes have not reached Intozi cleanly —
+  // purely informational, from the statuses already loaded, so it needs no extra
+  // call and only ever describes the page in view.
+  const syncAttention = useMemo(() => {
+    let pending = 0;
+    let failed = 0;
+    for (const v of visitors) {
+      const status = getIntoziSyncMeta(v).status;
+      if (status === 'pending') pending += 1;
+      else if (status === 'failed') failed += 1;
+    }
+    return { pending, failed };
+  }, [visitors]);
+
   const columns = useMemo(() => {
     const cols = [
       {
@@ -336,9 +390,6 @@ export default function Visitors() {
       {
         key: 'host',
         header: 'Host',
-        // The point of the record: a resident or tenant is accountable for this
-        // vehicle being on site. The details are stored on the pass, so they
-        // survive the host's own registration being renamed or deleted.
         render: (row) => (
           <div>
             <span className="text-gray-900">{row.host?.name || '—'}</span>
@@ -353,46 +404,53 @@ export default function Visitors() {
         header: 'Purpose',
         render: (row) => row.purpose || <span className="text-gray-400">—</span>,
       },
+      {
+        key: 'intozi_sync',
+        header: 'Intozi',
+        render: (row) => <IntoziSyncBadge row={row} />,
+      },
       { key: 'status', header: 'Status', render: (row) => <StatusCell row={row} /> },
       {
         key: 'is_active',
         header: 'Allowed',
-        // The switch is the state itself, not something done to the row: Status
-        // shows the outcome (which also depends on the window), this shows the
-        // one half a person controls.
-        render: (row) => (
-          <Switch
-            checked={row.is_active}
-            disabled={!canWrite || busyId === row.id}
-            onChange={canWrite ? () => handleToggleStatus(row) : undefined}
-            labels={null}
-            title={
-              !canWrite
-                ? row.is_active
-                  ? 'Allowed'
-                  : 'Revoked'
-                : row.is_active
-                  ? `Revoke ${row.vehicle_number} — reads as unregistered at every gate immediately`
-                  : `Reinstate ${row.vehicle_number}${
-                      row.inactive_reason === 'expired' || row.minutes_remaining < 0
-                        ? ' — note its window has closed, so it stays unregistered until extended'
-                        : ' — good again for whatever is left of its window'
-                    }`
-            }
-          />
-        ),
+        render: (row) => {
+          // A pass whose window has already closed cannot be reinstated: turning
+          // it back on would leave it reading unregistered anyway, until the
+          // window is extended. So a revoked, expired pass has its toggle locked —
+          // the fix is to Edit and extend the window, not to flip this switch.
+          // "Not started" is a future window, so reinstating it is allowed. One
+          // that is still allowed can always be revoked.
+          const windowClosed =
+            row.inactive_reason === 'expired' ||
+            (typeof row.minutes_remaining === 'number' && row.minutes_remaining < 0);
+          const lockedExpired = windowClosed && !row.is_active;
+
+          return (
+            <Switch
+              checked={row.is_active}
+              disabled={!canWrite || busyId === row.id || lockedExpired}
+              onChange={canWrite ? () => handleToggleStatus(row) : undefined}
+              labels={null}
+              title={
+                !canWrite
+                  ? row.is_active
+                    ? 'Allowed'
+                    : 'Revoked'
+                  : lockedExpired
+                    ? `${row.vehicle_number}'s window has closed — extend it from Edit before it can be reinstated`
+                    : row.is_active
+                      ? `Revoke ${row.vehicle_number} — reads as unregistered at every gate immediately`
+                      : `Reinstate ${row.vehicle_number} — good again for whatever is left of its window`
+              }
+            />
+          );
+        },
       },
       { key: 'window', header: 'Window', render: (row) => <WindowCell row={row} /> },
       {
         key: 'device_names',
         header: 'Gates',
-        // Empty means every gate in the project, which is the normal case.
-        render: (row) =>
-          row.device_names?.length ? (
-            <span className="font-mono text-xs">{row.device_names.join(', ')}</span>
-          ) : (
-            <span className="text-gray-400">All gates</span>
-          ),
+        render: (row) => <GatesCell row={row} />,
       },
       {
         key: 'issued_by',
@@ -678,6 +736,21 @@ export default function Visitors() {
             : total === 0
               ? 'No results'
             : `Showing ${startIndex}–${endIndex} of ${total} pass${total === 1 ? '' : 'es'}`}
+          {/* Sync attention, from the loaded page only. */}
+          {!error &&
+            total > 0 &&
+            (syncAttention.failed > 0 || syncAttention.pending > 0) && (
+              <span className="text-gray-400">
+                {' · '}
+                {[
+                  syncAttention.failed > 0 && `${syncAttention.failed} failed`,
+                  syncAttention.pending > 0 && `${syncAttention.pending} pending`,
+                ]
+                  .filter(Boolean)
+                  .join(', ')}{' '}
+                sync on this page
+              </span>
+            )}
         </p>
         <div className="flex items-center gap-2">
           <button

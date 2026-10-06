@@ -1,6 +1,7 @@
 // src/components/VisitorFormModal.jsx
 import { useState, useEffect, useMemo, useRef } from 'react';
 import Modal from './Modal';
+import { IntoziSyncBadge } from './Badge';
 import { fetchProjectDevices, fetchVehicles } from '../api/dataService';
 import {
   getErrorMessage,
@@ -569,12 +570,18 @@ export default function VisitorFormModal({
 
         {isEdit ? (
           <div className="rounded-md bg-gray-50 px-3 py-2 text-sm">
-            <span className="font-mono font-medium text-gray-900">
-              {visitor.vehicle_number}
-            </span>
-            <span className="ml-2 font-mono text-xs text-gray-500">
-              {visitor.group_id}
-            </span>
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <span className="font-mono font-medium text-gray-900">
+                  {visitor.vehicle_number}
+                </span>
+                <span className="ml-2 font-mono text-xs text-gray-500">
+                  {visitor.group_id}
+                </span>
+              </div>
+              {/* Read-only: where this pass stands on Intozi's watchlist. */}
+              <IntoziSyncBadge row={visitor} />
+            </div>
             <p className="mt-0.5 text-xs text-gray-400">
               Vehicle number and project cannot be changed — a different plate is a
               different visit.

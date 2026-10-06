@@ -8,10 +8,27 @@
 // List getters return a normalized { items, total }.
 // When you connect the real backend, these automatically start using it.
 
-import api from './axios';
+import api, { BASE_URL } from './axios';
 import { DEMO } from '../config';
 import { normalizeListResponse } from '../utils/format';
 import * as mock from './mockData';
+
+// Dev-only: log what a list endpoint actually returned, so an Intozi badge that
+// reads "Pending" everywhere can be traced to the API in one glance — whether
+// this build is talking to a backend that even sends `intozi_sync`, and what the
+// first row's value is. Silent in production builds.
+const logIntoziSync = (label, items) => {
+  if (!import.meta.env.DEV) return;
+  const first = Array.isArray(items) ? items[0] : null;
+  const present = !!first && 'intozi_sync' in first;
+  // eslint-disable-next-line no-console
+  console.log(
+    `[intozi_sync] ${label} via ${BASE_URL || '(no base url)'} — rows: ${
+      Array.isArray(items) ? items.length : 0
+    }, field present: ${present}, first row intozi_sync:`,
+    present ? first.intozi_sync : '(missing — UI falls back to "pending")'
+  );
+};
 
 // Fall back only when the backend gave no answer at all (server down / network)
 // or failed on its own side (5xx).
@@ -140,7 +157,9 @@ export async function fetchTrafficSeries(params = {}) {
 export async function fetchVehicles(params = {}) {
   try {
     const resp = await api.get('/api/vehicles', { params });
-    return normalizeListResponse(resp.data);
+    const result = normalizeListResponse(resp.data);
+    logIntoziSync('GET /api/vehicles', result.items);
+    return result;
   } catch (err) {
     if (shouldFallback(err)) return mock.getVehicles(params);
     throw err;
@@ -275,7 +294,9 @@ export async function deleteVehicle(id) {
 export async function fetchVisitors(params = {}) {
   try {
     const resp = await api.get('/api/visitors', { params });
-    return normalizeListResponse(resp.data);
+    const result = normalizeListResponse(resp.data);
+    logIntoziSync('GET /api/visitors', result.items);
+    return result;
   } catch (err) {
     if (shouldFallback(err)) return mock.getVisitors(params);
     throw err;

@@ -61,14 +61,36 @@ export const setOnSessionRefreshed = (cb) => {
  * top level) are still accepted so nothing breaks if an endpoint lags behind.
  */
 export const readAuthPayload = (body) => {
-  const d = body?.data && typeof body.data === 'object' ? body.data : body || {};
+  const payload = body?.data && typeof body.data === 'object' ? body.data : body || {};
+  const tokens = payload?.tokens && typeof payload.tokens === 'object' ? payload.tokens : {};
+
   return {
-    token: d.token || d.accessToken || null,
-    tokenType: d.token_type || 'Bearer',
-    expiresIn: d.expires_in || null,
-    refreshToken: d.refresh_token || d.refreshToken || null,
-    refreshExpiresIn: d.refresh_expires_in || null,
-    user: d.user || null,
+    token:
+      payload.token ||
+      payload.accessToken ||
+      payload.access_token ||
+      tokens.access_token ||
+      null,
+    tokenType: payload.token_type || payload.tokenType || 'Bearer',
+    expiresIn:
+      payload.expires_in ||
+      payload.expiresIn ||
+      tokens.expires_in ||
+      tokens.expiresIn ||
+      null,
+    refreshToken:
+      payload.refresh_token ||
+      payload.refreshToken ||
+      tokens.refresh_token ||
+      tokens.refreshToken ||
+      null,
+    refreshExpiresIn:
+      payload.refresh_expires_in ||
+      payload.refreshExpiresIn ||
+      tokens.refresh_expires_in ||
+      tokens.refreshExpiresIn ||
+      null,
+    user: payload.user || null,
   };
 };
 

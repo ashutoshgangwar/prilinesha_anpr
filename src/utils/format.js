@@ -126,3 +126,88 @@ export const getErrorMessage = (error, fallback = 'Something went wrong') => {
     fallback
   );
 };
+
+const MS_PER_MINUTE = 60_000;
+const MS_PER_HOUR = 3_600_000;
+const MS_PER_DAY = 86_400_000;
+
+export const normalizeIntoziSync = (value) => {
+  const sync = value && typeof value === 'object' ? value : {};
+  const status = ['synced', 'pending', 'failed', 'deleted'].includes(sync.status)
+    ? sync.status
+    : 'pending';
+
+  return {
+    status,
+    synced_at: sync.synced_at ?? null,
+    anpr_wl_id: sync.anpr_wl_id ?? null,
+  };
+};
+
+export const formatRelativeTime = (value) => {
+  if (!value) return 'just now';
+
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return 'just now';
+
+  const diffMs = Date.now() - date.getTime();
+  const absMs = Math.abs(diffMs);
+
+  if (absMs < MS_PER_MINUTE) return `${Math.max(1, Math.round(absMs / 1000))}s ago`;
+  if (absMs < MS_PER_HOUR) return `${Math.max(1, Math.round(absMs / MS_PER_MINUTE))}m ago`;
+  if (absMs < MS_PER_DAY) return `${Math.max(1, Math.round(absMs / MS_PER_HOUR))}h ago`;
+  const days = Math.round(absMs / MS_PER_DAY);
+  return `${Math.max(1, days)}d ago`;
+};
+
+export const getIntoziSyncMeta = (row) => {
+  const sync = normalizeIntoziSync(row?.intozi_sync);
+  const base = {
+    status: sync.status,
+    title: 'Not yet pushed to Intozi',
+    label: 'Pending',
+    color: 'amber',
+    icon: null,
+  };
+
+  if (sync.status === 'synced') {
+    return {
+      ...base,
+      label: 'Synced',
+      color: 'green',
+      title:
+        sync.anpr_wl_id != null
+          ? `On Intozi watchlist (id ${sync.anpr_wl_id}) · ${formatRelativeTime(sync.synced_at)}`
+          : `On Intozi watchlist · ${formatRelativeTime(sync.synced_at)}`,
+      icon: 'check',
+    };
+  }
+
+  if (sync.status === 'failed') {
+    return {
+      ...base,
+      label: 'Failed',
+      color: 'red',
+      title: 'Last push to Intozi failed — it will be retried',
+      icon: 'alert',
+    };
+  }
+
+  if (sync.status === 'deleted') {
+    return {
+      ...base,
+      label: 'Removed',
+      color: 'gray',
+      title: 'Removed from Intozi watchlist',
+      icon: 'minus',
+    };
+  }
+
+  return {
+    ...base,
+    title: 'Not yet pushed to Intozi',
+    label: 'Pending',
+    color: 'amber',
+    icon: 'clock',
+  };
+};
