@@ -406,7 +406,7 @@ export default function Visitors() {
       },
       {
         key: 'intozi_sync',
-        header: 'Intozi',
+        header: 'Sync status',
         render: (row) => <IntoziSyncBadge row={row} />,
       },
       { key: 'status', header: 'Status', render: (row) => <StatusCell row={row} /> },
@@ -473,7 +473,9 @@ export default function Visitors() {
         key: 'group_id',
         header: 'Project',
         render: (row) => (
-          <span className="font-mono text-xs text-gray-600">{row.group_id}</span>
+           <span className="font-mono text-xs text-gray-600">
+        {row.group_id?.replace(/_/g, ' ')}
+      </span>
         ),
       });
     }

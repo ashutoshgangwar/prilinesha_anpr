@@ -131,7 +131,7 @@ export default function Logs() {
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Logs</h1>
         <p className="mt-1 text-sm text-gray-500">
-          Vehicle detections from your projects, newest first
+        View vehicle detections and track the latest activity.
         </p>
       </div>
 

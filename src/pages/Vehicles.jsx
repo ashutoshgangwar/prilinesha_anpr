@@ -134,9 +134,11 @@ function GatesCell({ row }) {
 
   return (
     <div className="font-mono text-xs" title={gates.join(', ')}>
-      <div>{gates[0]}</div>
-      {expanded &&
-        gates.slice(GATES_PREVIEW).map((gate) => <div key={gate}>{gate}</div>)}
+    <div>{gates[0]?.replace(/_/g, ' ')}</div>
+     {expanded &&
+  gates.slice(GATES_PREVIEW).map((gate) => (
+    <div key={gate}>{gate?.replace(/_/g, ' ')}</div>
+  ))}
       {hidden > 0 && (
         <button
           type="button"
@@ -485,7 +487,9 @@ export default function Vehicles() {
         key: 'group_id',
         header: 'Project',
         render: (row) => (
-          <span className="font-mono text-xs text-gray-600">{row.group_id}</span>
+         <span className="font-mono text-xs text-gray-600">
+        {row.group_id?.replace(/_/g, ' ')}
+      </span>
         ),
       });
     }

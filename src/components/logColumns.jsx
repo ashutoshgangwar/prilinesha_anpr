@@ -50,17 +50,7 @@ function GateCell({ row }) {
   );
 }
 
-/**
- * Builds the column definitions shared by the Logs page and the Dashboard's
- * "recent logs" table.
- *
- *  - showProject: include the group_id column. Worth a column when the caller
- *    can see more than one project and has not narrowed to a single one; noise
- *    otherwise, since every row would repeat the same value.
- *
- * There are no row actions. GET /api/logs is the whole API — a detection cannot
- * be opened individually or deleted, and the images are not part of the payload.
- */
+
 export function buildLogColumns({ showProject = false } = {}) {
   const columns = [
     {

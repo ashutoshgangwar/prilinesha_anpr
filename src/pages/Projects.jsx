@@ -27,108 +27,6 @@ const EMPTY_FILTERS = { search: '', is_active: '' };
  * ever be read. It gets its own blocking dialog rather than a toast for exactly
  * that reason — a toast that auto-dismisses would take the key with it.
  */
-function ApiKeyModal({ open, result, onClose }) {
-  const [copied, setCopied] = useState(false);
-  if (!result) return null;
-
-  const { project, apiKey, intoziSetup, warning, login } = result;
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(apiKey);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      setCopied(false);
-    }
-  };
-
-  return (
-    <Modal
-      open={open}
-      title={`${project?.group_id} created`}
-      onClose={onClose}
-      footer={
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded-md bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600"
-        >
-          I've stored the key
-        </button>
-      }
-    >
-      <div className="space-y-4">
-        <div className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          {warning || 'Store this api_key now — it is shown once and cannot be retrieved later.'}
-        </div>
-
-        <div>
-          <label className="mb-1 block text-xs font-medium text-gray-600">
-            Intozi API key
-          </label>
-          <div className="flex items-center gap-2">
-            <code className="flex-1 break-all rounded-md bg-gray-900 px-3 py-2 font-mono text-xs text-gray-100">
-              {apiKey}
-            </code>
-            <button
-              type="button"
-              onClick={copy}
-              className="shrink-0 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-            >
-              {copied ? 'Copied' : 'Copy'}
-            </button>
-          </div>
-        </div>
-
-        {login && (
-          <div>
-            <p className="mb-1 text-xs font-medium text-gray-600">Customer login</p>
-            <dl className="rounded-md border border-gray-200 text-xs">
-              {[
-                ['Username', login.email],
-                // Only present when the server generated it — a password you
-                // supplied is not echoed back.
-                ['Password', login.password || `(${login.password_set})`],
-              ].map(([label, value]) => (
-                <div
-                  key={label}
-                  className="flex gap-3 border-b border-gray-100 px-3 py-2 last:border-b-0"
-                >
-                  <dt className="w-40 shrink-0 text-gray-500">{label}</dt>
-                  <dd className="break-all font-mono text-gray-800">{value}</dd>
-                </div>
-              ))}
-            </dl>
-            {login.note && <p className="mt-1 text-xs text-gray-500">{login.note}</p>}
-          </div>
-        )}
-
-        {intoziSetup && (
-          <div>
-            <p className="mb-1 text-xs font-medium text-gray-600">Camera setup</p>
-            <dl className="rounded-md border border-gray-200 text-xs">
-              {[
-                ['group_id', intoziSetup.group_id],
-                ['Post events to', intoziSetup.post_url],
-                ['Poll feed from', intoziSetup.feed_url],
-                ['Authorization header', intoziSetup.authorization_header],
-              ].map(([label, value]) => (
-                <div
-                  key={label}
-                  className="flex gap-3 border-b border-gray-100 px-3 py-2 last:border-b-0"
-                >
-                  <dt className="w-40 shrink-0 text-gray-500">{label}</dt>
-                  <dd className="break-all font-mono text-gray-800">{value}</dd>
-                </div>
-              ))}
-            </dl>
-          </div>
-        )}
-      </div>
-    </Modal>
-  );
-}
 
 const DIRECTIONS = ['entry', 'exit', 'both'];
 const DEVICE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9 _.-]{0,49}$/;
@@ -256,8 +154,8 @@ function ProjectDetailModal({ open, groupId, onClose, onProjectChanged }) {
               ['Customer', project.customer_name],
               ['Contact', [project.contact_email, project.contact_phone].filter(Boolean).join(' · ')],
               ['Description', project.description],
-              ['API key', project.api_key_last4 ? `••••${project.api_key_last4}` : null],
-              ['Key rotated', project.api_key_rotated_at ? formatDateTime(project.api_key_rotated_at) : null],
+              // ['API key', project.api_key_last4 ? `••••${project.api_key_last4}` : null],
+              // ['Key rotated', project.api_key_rotated_at ? formatDateTime(project.api_key_rotated_at) : null],
             ]
               .filter(([, v]) => v)
               .map(([label, value]) => (
@@ -267,6 +165,14 @@ function ProjectDetailModal({ open, groupId, onClose, onProjectChanged }) {
                 </div>
               ))}
           </dl>
+           <div className="mb-4 rounded-md border border-gray-200 bg-gray-50 p-3">
+    <p className="text-xs font-medium text-gray-500">
+      Project ID
+    </p>
+    <p className="mt-1 break-all font-mono text-sm font-semibold text-gray-900">
+      {project?.group_id || groupId || '—'}
+    </p>
+  </div>
 
           <div>
             <p className="mb-1 text-xs font-medium text-gray-600">
@@ -480,20 +386,27 @@ export default function Projects() {
 
   const columns = useMemo(
     () => [
-      {
-        key: 'group_id',
-        header: 'Project ID',
-        render: (row) => (
-          <button
-            onClick={() => setDetailId(row.group_id)}
-            className="font-mono font-medium text-brand-600 hover:underline"
-            title="View gates and counts"
-          >
-            {row.group_id}
-          </button>
-        ),
-      },
-      { key: 'project_name', header: 'Name', render: (row) => row.project_name || '—' },
+      
+{
+  key: 'group_id',
+  header: 'Project ID',
+  render: (row) => {
+    const displayId = row.group_id?.replace(/_/g, ' ');
+
+    return (
+      <button
+        type="button"
+        onClick={() => setDetailId(row.group_id)}
+        className="font-mono font-medium text-brand-600 hover:underline"
+        title="View project details"
+      >
+        {displayId}
+      </button>
+    );
+  },
+},
+
+      // { key: 'project_name', header: 'Name', render: (row) => row.project_name || '—' },
       {
         key: 'project_type',
         header: 'Type',
@@ -683,12 +596,6 @@ export default function Projects() {
         project={formModal.project}
         onClose={() => setFormModal({ open: false, project: null })}
         onSubmit={formModal.project ? handleUpdate : handleCreate}
-      />
-
-      <ApiKeyModal
-        open={!!keyResult}
-        result={keyResult}
-        onClose={() => setKeyResult(null)}
       />
 
       <ProjectDetailModal
