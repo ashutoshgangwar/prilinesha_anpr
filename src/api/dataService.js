@@ -416,27 +416,12 @@ export async function fetchProject(groupId) {
   }
 }
 
-/**
- * POST /api/projects.
- *
- * The response carries the Intozi API key in full, and this is the only time it
- * is ever readable — the server keeps a hash. Returned separately from the
- * project so callers cannot miss it.
- */
+/** POST /api/projects. Never pass credentials or setup instructions to UI callers. */
 export async function createProject(payload) {
   try {
     const resp = await api.post('/api/projects', payload);
-    const body = resp.data ?? {};
-    const data = body.data ?? {};
-    return {
-      project: data.project ?? null,
-      apiKey: data.api_key ?? null,
-      // Present only when create_login was asked for. Carries the generated
-      // password when the server chose it — shown once, like the key.
-      login: data.login ?? null,
-      intoziSetup: data.intozi_setup ?? null,
-      warning: body.warning ?? null,
-    };
+    const data = resp.data?.data ?? resp.data ?? {};
+    return { project: data.project ?? null };
   } catch (err) {
     if (shouldFallback(err)) return mock.createProject(payload);
     throw err;

@@ -302,17 +302,7 @@ export function createProject(payload) {
     updated_at: new Date().toISOString(),
   };
   projects = [withDeviceCount(project), ...projects];
-  return {
-    project,
-    apiKey: 'pk_demo_offline_key_not_real',
-    intoziSetup: {
-      group_id: project.group_id,
-      post_url: '/api',
-      feed_url: '/api/feed',
-      authorization_header: 'Bearer pk_demo_offline_key_not_real',
-    },
-    warning: 'Demo session — this key is not real.',
-  };
+  return { project };
 }
 
 /**

@@ -292,7 +292,6 @@ export default function Projects() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [formModal, setFormModal] = useState({ open: false, project: null });
-  const [keyResult, setKeyResult] = useState(null);
   const [detailId, setDetailId] = useState(null);
   const [busyId, setBusyId] = useState(null);
 
@@ -335,10 +334,9 @@ export default function Projects() {
     setProjects((prev) => prev.map((p) => (p.group_id === updated.group_id ? updated : p)));
 
   const handleCreate = async (payload) => {
-    const result = await createProject(payload);
+    await createProject(payload);
     setFormModal({ open: false, project: null });
-    // The key dialog takes over from here — it must be dismissed deliberately.
-    setKeyResult(result);
+    // Credentials are intentionally not retained in UI state or rendered.
     if (page === 1) loadProjects();
     else setPage(1);
   };
